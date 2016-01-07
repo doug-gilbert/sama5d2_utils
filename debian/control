@@ -1,0 +1,13 @@
+Source: sama5d2-utils
+Section: unknown
+Priority: extra
+Maintainer: Douglas Gilbert <dgilbert@interlog.com>
+Build-Depends: debhelper (>= 7.0.50~)
+Standards-Version: 3.8.4
+Homepage: http://sg.danny.cz/foxg20
+
+Package: sama5d2-utils
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Atmel SAMA5D2 family utilities
+ This is a package of GPIO, PWM, I2C and One-Wire utilities and documentation. 

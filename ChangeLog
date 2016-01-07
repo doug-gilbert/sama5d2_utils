@@ -1,0 +1,6 @@
+Each utility has its own version number, date of last change and
+some description at the top of its ".c" file. See README file.
+
+Changelog for sama5d2_utils-0.90 [20160106] [svn: r2]
+  - initial
+

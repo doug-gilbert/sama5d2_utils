@@ -1,0 +1,202 @@
+.TH GPIO_SYSFS "8" "November 2013" "sama5d3_utils\-0.92" SAMA5D3_UTILS
+.SH NAME
+gpio_sysfs \- manipulate GPIO bit value using sysfs
+.SH SYNOPSIS
+.B gpio_sysfs
+[\fI\-b BN\fR] [\fI\-c\fR] [\fI\-d USEC\fR] [\fI\-e\fR] [\fI\-f\fR
+[\fI\-h\fR] [\fI\-n NUM\fR] [\fI\-p PORT\fR] [\fI\-r\fR] [\fI\-R\fR]
+[\fI\-s 0|1\fR] [\fI\-t\fR] [\fI\-u\fR] [\fI\-U\fR] [\fI\-v\fR] [\fI\-V\fR]
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Manipulate a GPIO line (single bit) specified by \fIBN\fR via the Linux
+kernel's gpiolib interface in sysfs.
+.PP
+The Atmel AT91 family (including the SAMA5 family) name each GPIO line as
+follows: P<letter><num> where <letter> starts with 'A' and continues
+to 'C', 'D' or 'E' depending on the SoC. And <num> is a number starting
+at 0 up to 31, with the maximum value sometimes less than 31 depending on
+the SoC. So examples include: PA0, PB31, PD5 and PE31.
+.PP
+GPIO lines can have many controls and be multiplexed with input and output
+lines of other macrocells in a SoC. The Linux kernel provides the gpiolib
+subsystem to hide individual SoC GPIO complexity and provide general
+functionality. A relatively simple sysfs interface is provided by gpiolib
+under the /sys/class/gpio directory. The interface is described
+in <kernel_src>/Documentation/gpio.txt in the section titled: "Sysfs
+Interface for Userspace (OPTIONAL)".
+.PP
+A GPIO line can be specified in one of three ways to this utility:
+.TP
+\fI\-b BN\fR only
+Use the manufacturer's name (Atmel in this case) for the \fI\-b BN\fR option.
+The letters can be in upper or lower case and the leading 'P' can be omitted.
+Examples: '\-b PA5', '\-b pa5', '\-b a5' and '\-b PC31' .
+.TP
+\fI\-b BN\fR plus \fI\-p PORT\fR
+In this form the bank letter is given to \fI\-p PORT\fR (e.g. '\-p B') and
+the GPIO line number within that bank is given to
+\fI\-b BN\fR (e.g. '\-b 5') . Combining these examples PB5 is the specified
+GPIO line.
+.TP
+\fI\-p PORT\fR where \fIPORT\fR is a number
+In this form the number given to \fI\-p PORT\fR (e.g. '\-p 35')
+is a kernel GPIO number. Kernel GPIO numbers can be considered as a Linux
+kernel experiment that failed in the case of Atmel SoCs. Worse, the
+mapping between kernel GPIO numbers and Atmel GPIO naming has changed.
+Best to avoid this form.
+.PP
+Since this utility uses a generic interface within the Linux kernel, it
+should work with any processors that have GPIOs. The user's challenge is
+to work out how that processor's GPIO naming conventions map to the
+Linux kernel's GPIO numbers.
+.SH OPTIONS
+.TP
+\fB\-b\fR \fIBN\fR
+where \fIBN\fR either starts with a letter and is the manufacturer's GPIO
+name (Atmel in this case) or it starts with a number. In the letter case
+a leading 'P' is assumed if not given. The letter can be in upper or lower
+case and must be followed by a number; examples: '\-b PA3', '\-b a3'
+and '\-b PC31'. In the case where a number is given first (e.g. '\-b 3')
+then that number is assumed to be the GPIO line within the bank
+specified by the accompanying \fI\-p PORT\fR option.
+.TP
+\fB\-c\fR
+count rising edges on the given GPIO line that occur in the period of
+\fIUSEC\fR microseconds. If \fI\-d USEC\fR is not given then the count period
+is 1 second. When this option is used twice then falling edges are counted.
+When this option is used thrice then all edges (i.e. both rising and falling)
+are counted.
+.TP
+\fI\-d USEC\fR
+where \fIUSEC\fR is a period or delay in microseconds. Can be used together
+with the \fI\-c\fR or \fI\-t\fR option (but not both). With the \fI\-c\fR
+option, \fIUSEC\fR is the period edges are counted for. With the \fI\-t\fR
+option, \fIUSEC\fR is the delay after each transition.
+.TP
+\fB\-e\fR
+enumerate all the GPIO lines available on this SoC in table form. Each
+cell has the manufacturer's name followed by the kernel GPIO line number.
+Given the choice, prefer the manufacturer's name (e.g. PB7). This option
+does not need, and ignores, any given gpio line.
+.TP
+\fB\-f\fR
+force (drive) the line high when setting the GPIO line high. The default
+action when the GPIO line is set high is to put the line in input mode and
+assume an internal and external pull-up causes a high voltage to appear.
+.TP
+\fB\-h\fR
+print out usage message then exit.
+.TP
+\fB\-n\fR \fINUM\fR
+where \fINUM\fR is the number of cycles to toggle the given GPIO line when
+used together with the \fB\-t\fR option.
+.TP
+\fB\-p\fR \fIPORT\fR
+if \fIPORT\fR  is a letter then it is assumed to be a PIO bank. For example
+if \fIPORT\fR is 'B' or 'b' then that is Atmel PIO bank 'PB'. In this case
+the \fI\-b BN\fR option is also expected where \fIBN\fR is a number, for
+example '\-b 3'. Together these examples would specify PIO line PB3.
+If \fIPORT\fR is a number then it is interpreted as a Linux kernel GPIO
+number. Prior to the lk 3.4 series PA0 mapped to the kernel GPIO number of
+32; thereafter is mapped to 0 . If practice, kernel GPIO numbers should
+be avoided.
+.TP
+\fB\-r\fR
+if successful this utility either prints out '0' or '1' reflecting the
+logical state of the GPIO line. If the \fI\-r\fR option is given once then
+the exit status is 0 in both cases unless an error is detected. The exit
+status will typically be 1 if the utility is unsuccessful. If the \fI\-r\fR
+option is used twice then the exit status will reflect the logical state of
+the GPIO line (i.e. either 0 (for low) or 1 (for high)).
+.TP
+\fB\-s\fR \fI0|1\fR
+sets the specified GPIO line to the value 0 or 1.
+.TP
+\fB\-u\fR
+this option causes the specified GPIO line to be "unexported" prior to other
+operations by this utility. This may be required if the specified GPIO line
+was left in the "exported" state (e.g. a previous incantation of this utility
+used the \fI\-U\fR option). If this operation fails then an error message is
+output and the utility continues. See the kernel documentation file (gpio.txt)
+for more information about exported and unexported states. At boot up
+typically all available GPIO lines are in the "unexported" state.
+.TP
+\fB\-U\fR
+this option causes the specified GPIO line to be left "exported" when this
+utility exits. The default action is to "unexport" the specified GPIO line
+prior to this utility exiting. This option is ignored if the \fI\-S\fR
+option is given.
+.TP
+\fB\-v\fR
+increase the level of verbosity, (i.e. debug output). Additional output
+caused by this option is sent to stderr.
+.TP
+\fB\-V\fR
+print the version string and then exit.
+.SH NOTES
+Atmel generic GPIO lines may be multiplexed with other functions. Examples
+of these other functions include GPIO lines used for serial ports (e.g. TXD,
+RXD and RTS), I2C, SPI, 100_Mbps_ethernet and interrupt lines. The readbits
+utility should be used with care since if the given GPIO line is "in use"
+then after an invocation of readbits is finished then that GPIO line will be
+left in generic mode as an input. That may cause the previous function that
+the GPIO line was being used for to fail. Some versions of the Linux kernel
+prohibit utilities like readbits touching reserved GPIO lines. However in
+recent kernels (which have recently introduced "Device Tree" (open firmware)
+configuration) everything seems to be allowed. That may (and should) change
+to impose restrictions on other utilities interfering with reserved GPIO
+lines.
+.SH EXAMPLES
+First check if some GPIO lines are in use:
+.PP
+   a5d3_pio_status \-S
+.br
+       PIN   PIO_A        PIO_B        PIO_C        PIO_D        PIO_E
+.br
+       0:    GPIO         GTX0         ETX0         MCI0_CDA     A0/NBS0
+.br
+       .....
+.br
+       31:   GPIO         DTXD         GPIO         GPIO         GPIO
+.PP
+This indicates the PB31 is being used for the debug serial port TXD line
+and the other GPIO lines are "free". It is possible that some of those other
+GPIO lines are in use, for example driving small LEDs or reading the
+state of a switch. So more checking may be warranted. Let us assume PA31
+is free:
+.PP
+   readbits \-b pa31
+.br
+     1
+.PP
+Note that since the Atmel boot sequence sets most GPIO lines to have an
+internal pull-up resistor, most disconnected GPIO lines will yield 1 when
+read. To help script writers, the value output to stdout (i.e. '1' or '0')
+can also be set as the exit status value by using the \fI\-r\fR option:
+.PP
+   readbits \-b PA31 \-r
+.br
+     1
+.PP
+   echo $?
+.br
+     1
+.PP
+.SH EXIT STATUS
+The exit status of readbits is 0 when it is successful except if the
+\fI\-r\fR option is given. If readbits is successful and the \fI\-r\fR option
+has been given then the exit status is 0 or 1 reflecting the GPIO line
+state that has been read. If readbits fails then the exit status is most
+likely to be 1.
+.SH AUTHORS
+Written by Douglas Gilbert.
+.SH "REPORTING BUGS"
+Report bugs to <dgilbert at interlog dot com>.
+.SH COPYRIGHT
+Copyright \(co 2013 Douglas Gilbert
+.br
+This software is distributed under a FreeBSD license. There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.SH "SEE ALSO"
+.B setbits(sama5d3_utils)

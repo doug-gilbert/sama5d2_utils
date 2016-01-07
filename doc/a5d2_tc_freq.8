@@ -1,0 +1,208 @@
+.TH A5D2_TC_FREQ "8" "January 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.SH NAME
+a5d2_tc_freq \- generate frequencies with TC macrocell
+.SH SYNOPSIS
+.B a5d2_tc_freq
+\fI\-b PIO_TIO\fR [\fI\-d\fR] [\fI\-D\fR] [\fI\-e\fR] [\fI\-f FN\fR]
+[\fI\-h\fR] [\fI\-i\fR] [\fI\-I\fR] [\fI\-m M,S\fR] [\fI\-M\fR] [\fI\-n\fR]
+[\fI\-N\fR] [\fI\-p F1,D1[,F2,D2...]\fR] [\fI\-u\fR] [\fI\-v\fR] [\fI\-V\fR]
+[\fI\-w WPEN\fR]
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Atmel's SAMA5D2 family of SoCs contains two Timer Counter Block
+macrocells (TCB0 and TCB1) each containing three 32 bit Timer Counters (TC).
+TCB0 contains TC0, TC1 and TC2 while TCB1 contains TC3, TC4 and TC5. In the
+simplest case this utility configures the given TC to produce a frequency
+for a given duration.  A list of frequency, duration pairs can be given (as
+a command line option or in a file) that is played. By default a square
+wave is produced; its mark\-space ratio can be specified.
+.PP
+This utility could be used to play simple tunes on a small buzzer driven by
+a PIO line (i.e. a GPIO line). Even with HI_DRIVE the GPIO line may not
+have sufficient current to drive the buzzer, so a transistor may be
+needed (and a back EMF protection diode across the buzzer is recommended).
+.SH OPTIONS
+.TP
+\fB\-b\fR \fIPIO_TIO\fR
+\fIPIO_TIO\fR should be either a PIO name (e.g. 'PC2') or TIO
+name (e.g. 'TIOB3'). Use \fI\-e\fR to enumerate the valid PIO names and
+their corresponding TIO names.
+.TP
+\fB\-d\fR
+dummy mode: decode frequency,duration pairs, print them then exit. Ignore
+\fIPIO_TIO\fR if given.
+.TP
+\fB\-D\fR
+after initial checks, run as daemon which exits after frequencies are
+are produced.
+.TP
+\fB\-e\fR
+enumerate TC associated PIO names with corresponding TIO names then exit.
+.TP
+\fB\-f\fR \fIFN\fR
+read frequency,duration pairs from a file called \fIFN\fR. See the section
+on FREQUENCY/DURATION PAIRS below.
+.TP
+\fB\-h\fR
+print out usage message then exit.
+.TP
+\fB\-i\fR
+initialize GPIO pin associated with \fIPIO_TIO\fR for frequency output. The
+default action is to leave that GPIO pin with the peripheral setting it
+had prior to calling this utility. The Power Management Controller (PMC)
+is also set up for the TCB containing the TC associated with \fIPIO_TIO\fR.
+.TP
+\fB\-I\fR
+invert levels of mark and space. The default level for mark is
+high (typically 3.3 volts) while the default level for space is
+low (typically 0 volts).
+.TP
+\fB\-m\fR \fIM,S\fR
+The generated frequency is a square wave by default. This option will change
+the mark (\fIM\fR) space (\fIS\fR) ratio (def: 1,1). Technically 2,2 should
+also be a square wave but is more likely to fail at higher frequencies (say
+.TP
+\fB\-M\fR
+prints out interrupt mask register associated with TC. This requires the
+\fI\-b PIO_TIO\fR option to determine which TC. If any bits of a TC's
+interrupt mask register are set then it may well indicate that something
+else (e.g. the kernel) is using that TC. This utility will exit immediately
+after it has printed the mask.
+.TP
+\fB\-n\fR
+precise starting and stopping of TC generated frequencies depends on the
+process running this utility being scheduled back in promptly when a
+duration has expired. To this end, the default action is to give this process
+a (realtime) scheduling policy of SCHED_FIFO at the minimum priority level.
+This option bypasses the realtime scheduling step so this process competes
+with other normal processes on an equal footing. Best to use this option if
+the realtime scheduling causes some unwanted side effect.
+.TP
+\fB\-N\fR
+no PIO. The default action, at least when the \fI\-i\fR or \fI\-u\fR option
+is given, is to modify the PIO line (i.e. GPIO) associated with the TC output
+so the square wave is available externally. This may not be desirable as that
+PIO line may be needed for something else (e.g. TIOA3 is PC0 but that line
+is needed for the 10/100 ethernet interface (it's ETX0)). Rather than output
+the square wave to a PIO line, it could be used to generate an interrupt.
+This option suppresses any changes that would otherwise be made to the PIO
+line associated with \fIPIO_TIO\fR .
+.TP
+\fB\-p\fR \fIF1,D1[,F2,D2...]\fR
+the argument to this option is one or more frequency/duration pairs. See the
+FREQUENCY/DURATION PAIRS section below.
+.TP
+\fB\-u\fR
+restore the GPIO line associated with \fIPIO_TIO\fR to generic PIO mode when
+this utility is complete (i.e. when all duration are exhausted and just
+before exiting).
+.TP
+\fB\-v\fR
+increase the level of verbosity, (i.e. debug output). Additional output
+caused by this option is sent to stderr.
+.TP
+\fB\-V\fR
+print the version string and then exit.
+.TP
+\fB\-w\fR \fIWPEN\fR
+if \fIWPEN\fR is 0 then this utility will attempt to disable the write
+protect feature on the TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is
+1 then this utility will attempt to enable the write protect feature on the
+TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is -1 then this utility
+will attempt to show the current state of the write protect feature on this
+TCB. This utility will exit immediately after the actions associated with
+this option.
+.SH FREQUENCY/DURATION PAIRS
+Both the file referred to by \fIFN\fR and the argument to the \fI\-p\fR
+option contain frequency/duration pairs (one one should be given). They
+are comma separated however more flexible formatting is allowed in the
+the file referred to by \fIFN\fR such as whitespace and newline separators.
+The \fIFN\fR file may also contain the '#' character for comment and the
+rest of that line is ignored.
+.PP
+The frequency value can be positive, zero or negative. A positive value
+is interpreted as a frequency in hertz (i.e. cycles per second). The zero
+value is interpreted forcing the line low (typically 0 volts) for the
+associated duration. A negative value is interpreted as a period (negated
+to remove the minus sign) with the units of milliseconds. So \-1 is a
+period of 1 millisecond (i.e. 1000 Hz) while \-2500 is a period of 2.5
+seconds. At the end of each frequency generation by the TC unit the GPIO
+line is set low.
+.PP
+The duration value can be positive or \-1. If it is positive then the value
+is a duration, in milliseconds, to maintain the associated frequency. If
+\-1 then it means continual. In the continual case the \fI\-i\fR option
+is assumed (even if not given), the TC is configured to produce the
+associated frequency and this utility exits. Any frequency/duration
+pairs after one with continual duration are ignored.
+.PP
+Assuming a master clock (MCK) of 132 MHz the maximum square wave frequency
+that can generated is 33 MHz. Dividers may have been applied in the PMC
+for either TCB0 or TCB1 that may divide this maximum frequency by 2, 4
+or 8. At the maximum frequency, only a square with a mark space ratio of
+1:1 can be generated.
+Assuming a slow clock (SLCK) of 32768 Hz the longest period (implying the
+lowest frequency) that can generated is 131071.999 seconds.
+.PP
+The argument to the \fI\-p\fR option (i.e. the frequency/duration pairs) may
+contain a space or tab as a separator but the argument would need to be
+quoted (e.g. surrounded by double quotes) to stop the shell interpreting
+them as unassociated command line arguments.
+.SH NOTES
+The SAMA5D2 Power Management Controller (PMC) reduces power by turning off
+the master clock going to various macrocells. At power up almost all
+macrocells are turned off. During boot up the kernel turns on those
+macrocell clocks that it needs.
+.PP
+In the case of the time counters there is a PMC clock for each time counter
+block (TCB): so there is one clock for TCB0 and another for TCB1. Depending
+on how the kernel is configured, it may turn on the PMC clock for TCB0. Also
+to save a little more power, the PMC may run a macrocell at a reduced
+frequency, typically the master clock frequency divided by 2, 4 or 8. For
+a TC these reduced master clock frequencies will lower the maximum frequency
+of square wave that can be produced. Since a PMC clock is shared by all three
+TCs in a TCB, the user should take care changing that divider if other TCs in
+the TCB are already in use.
+.SH EXAMPLES
+To view the available PIO and TIO names:
+.PP
+   a5d2_tc_freq \-e
+.br
+      PD5       <->     TIOA0   [peripheral: B]
+.br
+      PD6       <->     TIOB0   [peripheral: B]
+.br
+      PC12      <->     TIOA1   [peripheral: B]
+.br
+      ...
+.PP
+To generate 1 kHz square for 2 seconds on TIOA1:
+.PP
+   a5d2_tc_freq \-b PC12 \-i \-p 1000,2000
+.br
+or
+.br
+   a5d2_tc_freq \-b TIOA1 \-i \-p 1000,2000
+.br
+or
+.br
+   a5d2_tc_freq \-b TIOA1 \-i \-p -1,2000
+.PP
+To generate 1 MHz with a mark/space ratio of 2:1 indefinitely:
+.PP
+   a5d2_tc_freq \-b PC12 \-i \-m 2,1 \-p 1000000,-1
+.SH EXIT STATUS
+The exit status of a5d2_tc_freq is 0 when it is successful. Otherwise it
+is most likely to be 1.
+.SH AUTHORS
+Written by Douglas Gilbert.
+.SH "REPORTING BUGS"
+Report bugs to <dgilbert at interlog dot com>.
+.SH COPYRIGHT
+Copyright \(co 2013 Douglas Gilbert
+.br
+This software is distributed under a FreeBSD license. There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.SH "SEE ALSO"
+.B a5d2_pmc(sama5d2_utils)

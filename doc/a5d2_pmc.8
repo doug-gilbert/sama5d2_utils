@@ -1,0 +1,158 @@
+.TH A5D2_PMC "8" "January 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.SH NAME
+a5d2_pmc \- Power Management Controller (PMC) utility
+.SH SYNOPSIS
+.B a5d2_tc_freq
+[\fI\-a ACRON\fR] [\fI\-d DIV\fR] [\fI\-D\fR] [\fI\-e\fR] [\fI\-E\fR]
+[\fI\-h\fR] [\fI\-p\fR] [\fI\-s\fR] [\fI\-v\fR] [\fI\-V\fR]
+[\fI\-w WPEN\fR]
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Atmel's SAMA5D2 family of SoCs contains a Power Management Controller (PMC)
+which achieves power reduction by allowing clocks that run other macrocells
+to be slowed down or stopped.
+.PP
+The clocks are divider into two groups: systems clocks and peripheral
+clocks.
+.PP
+The default action of this utility (i.e. when no options are given) is to
+list peripheral clocks that are enabled.
+.SH OPTIONS
+.TP
+\fB\-a\fR \fIACRON\fR
+\fIACRON\fR is an acronym for a system or peripheral clock. To enumerate the
+available acronyms, use the \fI\-e\fR option. Alternatively a number may be
+given which is interpreted as an identifier; in which case the \fI\-p\fR or
+\fI\-s\fR oprion must be given to indicate whether the identifier is for a
+system or peripheral clock.
+.TP
+\fB\-d\fR \fIDIV\fR
+in most cases, the master clock (MCK) going to the peripheral macrocell
+identified by \fIACRON\fR can be divided by 2, 4 or 8. \fIDIV\fR may be 1,
+2, 4 or 8. The default is a value of 1 .
+.TP
+\fB\-D\fR
+disable (turn off) the clock going to the system or peripheral macrocell
+identified by \fIACRON\fR. If a Linux driver is using the associated
+macrocell then the kernel may freeze so use with care. All peripheral
+clocks are disabled at reset, however the boostrap and kernel will almost
+always turn some on. The kernel may only turn on a peripheral clock
+when the corresponding device is in use (e.g. serial ports (i.e. usarts
+or uarts) clocks only enabled while the corresponding serial port (e.g.
+/dev/ttyS2) is open).
+.TP
+\fB\-e\fR
+enumerate the available system and peripheral clocks. A separate table for
+each is shown. Each table contains an ID, acronym and description column.
+.TP
+\fB\-E\fR
+enable (turn on) the clock going to the system or peripheral macrocell
+identified by \fIACRON\fR.
+.TP
+\fB\-h\fR
+print out usage message then exit.
+.TP
+\fB\-p\fR
+if \fIACRON\fR is not given then this option will list peripheral clocks
+that are enabled. If \fIACRON\fR is a number then this option indicates
+that it refers to a peripheral clock.
+.TP
+\fB\-s\fR
+if \fIACRON\fR is not given then this option will list system clocks that
+are enabled. If \fIACRON\fR is a number then this option indicates that it
+refers to a system clock.
+.TP
+\fB\-v\fR
+increase the level of verbosity, (i.e. debug output). Additional output
+caused by this option is sent to stderr.
+.TP
+\fB\-V\fR
+print the version string and then exit.
+.TP
+\fB\-w\fR \fIWPEN\fR
+if \fIWPEN\fR is 0 then this utility will attempt to disable the write
+protect feature on the TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is
+1 then this utility will attempt to enable the write protect feature on the
+TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is -1 then this utility
+will attempt to show the current state of the write protect feature on this
+TCB. This utility will exit immediately after the actions associated with
+this option.
+.SH NOTES
+The SAMA5D2 Power Management Controller (PMC) reduces power by turning off
+the master clock going to various macrocells. At power up almost all
+macrocells are turned off. During boot up the kernel turns on those
+macrocell clocks that it needs.
+.SH EXAMPLES
+To view the available system and peripheral clocks:
+.PP
+   a5d2_pmc \-e
+.br
+     System clocks:
+.br
+             ID      Acronym         Description
+.br
+     -------------------------------------------------
+.br
+             0       PCK             Processor clock
+.br
+             2       DDRCK           DDR clock
+.br
+             ...
+.br
+     Peripheral clocks:
+.br
+             ID      Acronym         Description
+.br
+     -------------------------------------------------
+.br
+             2       DBGU            Debug unit
+.br
+             3       PIT             Periodic interval timer
+.br
+             4       WDT             watchdog timer
+.br
+             ...
+.PP
+To view the peripheral clocks that are currently enabled:
+.PP
+   a5d2_pmc 
+.br
+     Peripheral clocks enabled:
+.br
+         DBGU:       Debug unit
+.br
+         HSMC:       Multi-bit ECC
+.br
+         PIOA:       Parallel I/O controller A
+.br
+         PIOB:       Parallel I/O controller B
+.br
+         ...
+.PP
+To view the system clocks that are currently enabled:
+.PP
+   a5d2_pmc \-s
+.br
+     System clocks enabled:
+.br
+         PCK:        Processor clock
+.br
+         DDRCK:      DDR clock
+.br
+         UHP:        The UHP48M and UHP12M OHCI clocks
+.br
+.SH EXIT STATUS
+The exit status of a5d2_pmc is 0 when it is successful. Otherwise it
+is most likely to be 1.
+.SH AUTHORS
+Written by Douglas Gilbert.
+.SH "REPORTING BUGS"
+Report bugs to <dgilbert at interlog dot com>.
+.SH COPYRIGHT
+Copyright \(co 2013 Douglas Gilbert
+.br
+This software is distributed under a FreeBSD license. There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.SH "SEE ALSO"
+.B a5d2_tc_freq(sama5d2_utils)
