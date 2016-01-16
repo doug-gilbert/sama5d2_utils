@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013 Douglas Gilbert.
+ * Copyright (c) 2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,12 +28,12 @@
  */
 
 /*****************************************************************
- * a5d3_tc_freq.c
+ * a5d2_tc_freq.c
  *
  * Utility to produce the given frequencies for the given durations.
- * Uses the SAMA5D3 timer-counter (TC) unit to generate the
+ * Uses the SAMA5D2 timer-counter (TC) unit to generate the
  * frequencies on PIO lines corresponding to TIOA0-5 and TIOB0-5.
- * The SAMA5D3 has two TC blocks, each with 3 TCs; TCB0 contains TC0, TC1,
+ * The SAMA5D2 has two TC blocks, each with 3 TCs; TCB0 contains TC0, TC1,
  * and TC2 while TCB1 contains TC3, TC4 and TC4.
  * Note the Linux kernel uses TC0 for internal purposes.
  *
@@ -46,6 +46,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <string.h>
 #include <unistd.h>
@@ -63,44 +64,55 @@
 // #include <sys/ioctl.h>
 
 
-static const char * version_str = "1.01 20130723";
+static const char * version_str = "1.00 20160115";
 
 #define MAX_ELEMS 512
 #define DEV_MEM "/dev/mem"
 #define MAP_SIZE 4096   /* assume to be power of 2 */
 #define MAP_MASK (MAP_SIZE - 1)
 
-/* On the SAMA5D3 each TCB has a separate peripheral identifier:
- * TCB0 is 26 and TCB1 is 27. Since the Linux kernel uses TC0 which is
+/* On the SAMA5D2 each TCB has a separate peripheral identifier:
+ * TCB0 is 35 and TCB1 is 36. Since the Linux kernel uses TC0 which is
  * in TCB0 then it should be enabled. */
-#define PMC_PCER0  0xfffffc10   /* peripheral clock enable, reg 0 */
-#define PMC_PCDR0  0xfffffc14   /* peripheral clock disable, reg 0 */
-#define PMC_PCSR0  0xfffffc18   /* peripheral clock status, reg 0 */
-#define PMC_PCR    0xfffffd0c   /* peripheral control register */
+#define PMC_PCER0  0xf0014010   /* peripheral clock enable, reg 0 */
+#define PMC_PCDR0  0xf0014014   /* peripheral clock disable, reg 0 */
+#define PMC_PCSR0  0xf0014018   /* peripheral clock status, reg 0 */
+#define PMC_PCER1  0xf0014100   /* peripheral clock enable, reg 1 */
+#define PMC_PCDR1  0xf0014104   /* peripheral clock disable, reg 1 */
+#define PMC_PCSR1  0xf0014108   /* peripheral clock status, reg 1 */
+#define PMC_PCR    0xf001410c   /* peripheral control register */
                                 /* - for peripheral divider */
+#define PMC_PCR_GCKDIV_MSK 0xff00000
+#define PMC_PCR_GCKDIV_SHIFT 20
 
-#define SAMA5D3_PERI_ID_TCB0 26 /* contains TC0, TC1 and TC2 */
-#define SAMA5D3_PERI_ID_TCB1 27 /* contains TC3, TC4 and TC5 */
+#define SAMA5D2_PERI_ID_TCB0 35 /* contains TC0, TC1 and TC2 */
+#define SAMA5D2_PERI_ID_TCB1 36 /* contains TC3, TC4 and TC5 */
 
 // wave=1, wavesel=2, T_CLK1 EEVT=1
 #define TC_CMR_VAL_CLK1  0x0000c400
 // wave=1, wavesel=2, T_CLK5 EEVT=1
 #define TC_CMR_VAL_CLK5  0x0000c404
+#define TC_CMR_TCCLKS_DEF 0     /* Generic clock from PMC (divided by 1) */
 
 // BSWTRG=1 BCPC=1 BCPB=2, ASWTRG=2 ACPC=2 ACPA=1 : TIOA? leads with mark
 #define TC_CMR_MS_MASK  0x46890000
 // BSWTRG=2 BCPC=2 BCPB=1, ASWTRG=1 ACPC=1 ACPA=2 : TIOA? leads with space
 #define TC_CMR_MS_INV_MASK  0x89460000
 
-/* TIMER_CLOCK1 is MCK/2, MCK/4, MCK/8 or MCK/16 . Which one depends on the
- * DIV field PMC_PCR. Note that DIV field is common to all TCs in a TCB. */
-#define TIMER_CLOCK1 66000000 /* Assume MCK=132 MHz, and DIV=0 (div by 2) */
+#define TC_CCR_SWTRG 4          /* Software trigger */
+#define TC_CCR_CLKDIS 2         /* Clock disable */
+#define TC_CCR_CLKEN 1          /* Clock enable, if TC_CCR_CLKDIS not given */
+
+/* TIMER_CLOCK1 is the generic clock (per TCB block) from the PMC which is
+ * often the "main" clock (24 MHz) or .....
+ */
+#define TIMER_CLOCK1 83000000 /* master clock is 166 MHz, div by 2 */
 #define TIMER_CLOCK5 32768
 
-#define A5D3_TCB_WPKEY 0x54494D  /* "TIM" in ASCII */
+#define A5D2_TCB_WPKEY 0x54494D  /* "TIM" in ASCII */
 
 
-/* N.B. the SAMA5D3 Timer Counter unit has 32 bit counters. Some earlier
+/* N.B. the SAMA5D2 Timer Counter unit has 32 bit counters. Some earlier
  * members of the AT91 family had 16 bit counters. */
 
 struct mmap_state {
@@ -116,9 +128,6 @@ struct elem_t {
 };
 
 struct table_io_t {
-    char bank;                  /* which PIO: 'A' to 'E' */
-    char bn;                    /* bit within PIO: 0 to 31 */
-    char peri;                  /* 'A', 'B', 'C' or '\0' */
     char tcb;                   /* 0 for TCB0 (TC0, TC1, RC2) else 1 */
     const char * tio_name;
     unsigned int tc_ccr;
@@ -127,54 +136,62 @@ struct table_io_t {
     unsigned int tc_rb;
     unsigned int tc_rc;
     unsigned int tc_imr;
+    unsigned int tc_emr;
     unsigned int tc_wpmr;       /* one write protect mode reg per tcb */
     int is_tioa;
+};
+
+struct value_str_t {
+    int val;
+    const char *str;
 };
 
 
 static struct elem_t elem_arr[MAX_ELEMS];
 
-/* The following PIO registers are indexed by the bank ('A' for 0, etc) */
-static unsigned int pio_per[] = {0xfffff200, 0xfffff400, 0xfffff600,
-                0xfffff800, 0xfffffa00};   /* PIO Enable Register */
-static unsigned int pio_pdr[] = {0xfffff204, 0xfffff404, 0xfffff604,
-                0xfffff804, 0xfffffa04};   /* PIO Disable Register */
-static unsigned int pio_abcdsr1[] = {0xfffff270, 0xfffff470, 0xfffff670,
-                0xfffff870, 0xfffffa70}; /* Peripheral select 1 */
-static unsigned int pio_abcdsr2[] = {0xfffff274, 0xfffff474, 0xfffff674,
-                0xfffff874, 0xfffffa74}; /* Peripheral select 2 */
-
 /* settings for TIOA0-5 and TIOB0-5. */
 static struct table_io_t table_arr[] = {
-    /* TCB0: */
-    {'D', 5, 'B', 0, "TIOA0", 0xf0010000, 0xf0010004, 0xf0010014,
-     0xf0010018, 0xf001001c, 0xf001002c, 0xf00100e4, 1},  /* PD5 peri_B */
-    {'D', 6, 'B', 0, "TIOB0", 0xf0010000, 0xf0010004, 0xf0010014,
-     0xf0010018, 0xf001001c, 0xf001002c, 0xf00100e4, 0},  /* PD6 peri_B */
-    {'C', 12, 'B', 0, "TIOA1", 0xf0010040, 0xf0010044, 0xf0010054,
-     0xf0010058, 0xf001005c, 0xf001006c, 0xf00100e4, 1},  /* PC12 peri_B */
-    {'C', 13, 'B', 0, "TIOB1", 0xf0010040, 0xf0010044, 0xf0010054,
-     0xf0010058, 0xf001005c, 0xf001006c, 0xf00100e4, 0},  /* PC13 peri_B */
-    {'E', 27, 'B', 0, "TIOA2", 0xf0010080, 0xf0010084, 0xf0010094,
-     0xf0010098, 0xf001009c, 0xf00100ac, 0xf00100e4, 1},  /* PE27 peri_B */
-    {'E', 28, 'B', 0, "TIOB2", 0xf0010080, 0xf0010084, 0xf0010094,
-     0xf0010098, 0xf001009c, 0xf00100ac, 0xf00100e4, 0},  /* PE28 peri_B */
+    /* TCB0:   base 0xf800c000 */
+    {0, "TIOA0", 0xf800c000, 0xf800c004, 0xf800c014,
+     0xf800c018, 0xf800c01c, 0xf800c02c, 0xf800c030, 0xf800c0e4, 1},
+    {0, "TIOB0", 0xf800c000, 0xf800c004, 0xf800c014,
+     0xf800c018, 0xf800c01c, 0xf800c02c, 0xf800c030, 0xf800c0e4, 0},
+    {0, "TIOA1", 0xf800c040, 0xf800c044, 0xf800c054,
+     0xf800c058, 0xf800c05c, 0xf800c06c, 0xf800c070, 0xf800c0e4, 1},
+    {0, "TIOB1", 0xf800c040, 0xf800c044, 0xf800c054,
+     0xf800c058, 0xf800c05c, 0xf800c06c, 0xf800c070, 0xf800c0e4, 0},
+    {0, "TIOA2", 0xf800c080, 0xf800c084, 0xf800c094,
+     0xf800c098, 0xf800c09c, 0xf800c0ac, 0xf800c0b0, 0xf800c0e4, 1},
+    {0, "TIOB2", 0xf800c080, 0xf800c084, 0xf800c094,
+     0xf800c098, 0xf800c09c, 0xf800c0ac, 0xf800c0b0, 0xf800c0e4, 0},
 
-    /* TCB1: */
-    {'C', 0, 'B', 1, "TIOA3", 0xf8014000, 0xf8014004, 0xf8014014,
-     0xf8014018, 0xf801401c, 0xf801402c, 0xf80140e4, 1},  /* PC0 peri_B */
-    {'C', 1, 'B', 1, "TIOB3", 0xf8014000, 0xf8014004, 0xf8014014,
-     0xf8014018, 0xf801401c, 0xf801402c, 0xf80140e4, 0},  /* PC1 peri_B */
-    {'C', 3, 'B', 1, "TIOA4", 0xf8014040, 0xf8014044, 0xf8014054,
-     0xf8014058, 0xf801405c, 0xf801406c, 0xf80140e4, 1},  /* PC3 peri_B */
-    {'C', 4, 'B', 1, "TIOB4", 0xf8014040, 0xf8014044, 0xf8014054,
-     0xf8014058, 0xf801405c, 0xf801406c, 0xf80140e4, 0},  /* PC4 peri_B */
-    {'C', 6, 'B', 1, "TIOA5", 0xf8014080, 0xf8014084, 0xf8014094,
-     0xf8014098, 0xf801409c, 0xf80140ac, 0xf80140e4, 1},  /* PC6 peri_B */
-    {'C', 7, 'B', 1, "TIOB5", 0xf8014080, 0xf8014084, 0xf8014094,
-     0xf8014098, 0xf801409c, 0xf80140ac, 0xf80140e4, 0},  /* PC7 peri_B */
+    /* TCB1:   base 0xf8010000 */
+    {1, "TIOA3", 0xf8010000, 0xf8010004, 0xf8010014,
+     0xf8010018, 0xf801001c, 0xf801002c, 0xf8010030, 0xf80100e4, 1},
+    {1, "TIOB3", 0xf8010000, 0xf8010004, 0xf8010014,
+     0xf8010018, 0xf801001c, 0xf801002c, 0xf8010030, 0xf80100e4, 0},
+    {1, "TIOA4", 0xf8010040, 0xf8010044, 0xf8010054,
+     0xf8010058, 0xf801005c, 0xf801006c, 0xf8010070, 0xf80100e4, 1},
+    {1, "TIOB4", 0xf8010040, 0xf8010044, 0xf8010054,
+     0xf8010058, 0xf801005c, 0xf801006c, 0xf8010070, 0xf80100e4, 0},
+    {1, "TIOA5", 0xf8010080, 0xf8010084, 0xf8010094,
+     0xf8010098, 0xf801009c, 0xf80100ac, 0xf80100b0, 0xf80100e4, 1},
+    {1, "TIOB5", 0xf8010080, 0xf8010084, 0xf8010094,
+     0xf8010098, 0xf801009c, 0xf80100ac, 0xf80100b0, 0xf80100e4, 0},
 
-    {0, 0, 0, 0, NULL, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+};
+
+static struct value_str_t tcclks_arr[] = {
+    {0, "TIMER_CLOCK1  Generic clock (GCLK) from PMC"},
+    {1, "TIMER_CLOCK2  GCLK div 8"},
+    {2, "TIMER_CLOCK3  GCLK div 32"},
+    {3, "TIMER_CLOCK4  GCLK div 128"},
+    {4, "TIMER_CLOCK5  slow clock"},
+    {5, "XC0"},
+    {6, "XC1"},
+    {7, "XC2"},
+    {-1, NULL},
 };
 
 static int tc_tclock1 = TIMER_CLOCK1;   /* may get divided by power of 2 */
@@ -187,32 +204,31 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage: "
-            "a5d3_tc_freq -b PIO_TIO [-d] [-D] [-e] [-f FN] [-h] "
-            "[-i] [-I]\n"
-            "                    [-m M,S] [-M] [-n] [-N] "
-            "[-p F1,D1[,F2,D2...]] [-u]\n"
-            "                    [-v] [-V] [-w WPEN]\n"
+            "a5d2_tc_freq -b TIO [-c TCCLKS] [-d] [-D] [-e] [-f FN] [-h]\n"
+            "                    [-i] [-I] [-m M,S] [-M] [-n] "
+            "[-p F1,D1[,F2,D2...]]\n"
+            "                    [-u] [-v] [-V] [-w WPEN]\n"
             "  where:\n"
-            "    -b PIO_TIO    either PIO name (e.g. 'PC2') or TIO name "
-            "(e.g. 'TIOB3')\n"
+            "    -b TIO       TIO name ('TIOA0', 'TIOB0' to 'TIOA5' or "
+            "'TIOB5')\n"
+            "    -c TCCLKS    clock source (def: 0 -> generic clock from "
+            "PMC)\n"
             "    -d           dummy mode: decode frequency,duration pairs, "
             "print\n"
-            "                 them then exit; ignore PIO_TIO\n"
+            "                 them then exit; ignore TIO\n"
             "    -D           after initial checks, run as daemon which "
             "exits after\n"
             "                 frequency(s) is produced\n"
-            "    -e           enumerate TC associated PIO names with "
-            "corresponding\n"
-            "                 TIO names then exit\n"
+            "    -e           enumerate TIO names\n"
             "    -f FN        obtain input from file FN. A FN of '-' "
             "taken as\n"
             "                 read stdin. If '-f' not given then '-p' "
             "option expected\n"
             "    -h           print usage message\n"
-            "    -i           initialize PIO_TIO for frequency output, "
-            "(def: assume\n"
-            "                 already set up). Line set low prior to "
-            "frequency generation\n"
+            "    -i           initialize TIO for frequency output, (def: "
+            "assume already\n"
+            "                 set up). Line set low prior to frequency "
+            "generation\n"
             "    -I           invert levels of mark and space\n"
             "    -m M,S       mark (M) space (S) ratio (def: 1,1), both "
             "M and S\n"
@@ -220,15 +236,11 @@ usage(void)
             "    -M           show TC interrupt mask register then exit\n"
             "    -n           no realtime scheduling (def: set "
             "SCHED_FIFO)\n"
-            "    -N           no PIO; do not touch PIO line settings\n"
             "    -p F1,D1[,F2,D2...]    one or more frequency duration "
             "pairs; frequency\n"
             "                           in Hz and the duration in "
             "milliseconds\n"
-            "    -u           restore PIO_NAM to normal GPIO operation "
-            "on exit\n"
-            "                 (def: leave low for next frequency "
-            "generation)\n"
+            "    -u           disable the TIO clock prior to exiting\n"
             "    -v           increase verbosity (multiple times for more)\n"
             "    -V           print version string then exit\n"
             "    -w WPEN      set or show write protect (WP) information "
@@ -237,7 +249,7 @@ usage(void)
             "-1 -> show\n"
             "                 WP en/disable state. Then in all cases "
             "exit\n\n"
-            "Use the timer counter (TC) in the SAMA5D3 SoCs to "
+            "Use the timer counter (TC) in the SAMA5D2 SoCs to "
             "generate frequencies.\n"
             "List of frequency (Hz when positive), duration (milliseconds "
             "when positive)\npairs can be given on the command line ('-p') "
@@ -250,12 +262,26 @@ usage(void)
             "millisecond (i.e. 1000 Hz) while\n-2500, for example, gives a "
             "period of 2.5 seconds. The maximum period is\n131071.999 "
             "seconds, corresponding to -131071999 . The maximum "
-            "frequency\ndepends on the master clock (MCK) and whether "
-            "TCB dividers are set in the\nPMC; typically either 16.5 or 33 "
-            "MHz.\n");
+            "frequency\ndepends on the master clock (MCK) and is "
+            "typically 41.5 MHz.\n");
 }
 
+#ifdef __cplusplus
 
+static inline volatile unsigned int *
+mmp_add(void * p, unsigned int v)
+{
+    return (volatile unsigned int *)((unsigned char *)p + v);
+}
+
+#else
+
+static inline volatile unsigned int *
+mmp_add(unsigned char * p, unsigned int v)
+{
+    return (volatile unsigned int *)(p + v);
+}
+#endif
 
 void
 cl_print(int priority, const char *fmt, ...)
@@ -399,8 +425,8 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 continue;
             k = strspn(lcp, allowp);
             if ((k < in_len) && ('#' != lcp[k])) {
-                fprintf(stderr, "build_arr: syntax error at "
-                        "line %d, pos %d\n", j + 1, m + k + 1);
+                fprintf(stderr, "%s: syntax error at line %d, pos %d\n",
+                        __func__, j + 1, m + k + 1);
                 return 1;
             }
             for (k = 0; k < 1024; ++k) {
@@ -415,21 +441,21 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 }
                 u = get_num(lcp, strlen(lcp));
                 if ((off + k) >= max_arr_len) {
-                    fprintf(stderr, "build_arr: array length exceeded\n");
+                    fprintf(stderr, "%s: array length exceeded\n", __func__);
                     return 1;
                 }
                 if (neg) {
                     if ((u - 1) > INT_MAX) {
-                        fprintf(stderr, "build_arr: number too small: "
-                                "-%u\n", u);
+                        fprintf(stderr, "%s: number too small: -%u\n",
+                                __func__, u);
                         return 1;
                     }
                     m = -((int)(u - 1));
                     --m;
                 } else { /* non-negative */
                     if (u > INT_MAX) {
-                        fprintf(stderr, "build_arr: number too large: "
-                                "%u\n", u);
+                        fprintf(stderr, "%s: number too large: %u\n",
+                                __func__, u);
                         return 1;
                     }
                     m = (int)u;
@@ -454,8 +480,8 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
             off += (k + 1);
         }
         if (fr) {
-            fprintf(stderr, "build_arr: got frequency but missing "
-                    "duration\n");
+            fprintf(stderr, "%s: got frequency but missing duration\n",
+                     __func__);
             return 1;
         }
         if (off < max_arr_len) {
@@ -472,7 +498,7 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
         }
         k = strspn(inp, allowp);
         if (in_len != k) {
-            fprintf(stderr, "build_arr: error at pos %d\n", k + 1);
+            fprintf(stderr, "%s: error at pos %d\n", __func__, k + 1);
             return 1;
         }
         for (k = 0, fr = 0; k < max_arr_len; ++k) {
@@ -484,16 +510,16 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
             u = get_num(lcp, strlen(lcp));
             if (neg) {
                 if ((u - 1) > INT_MAX) {
-                    fprintf(stderr, "build_arr: number too small: "
-                            "-%u\n", u);
+                    fprintf(stderr, "%s: number too small: -%u\n", __func__,
+                            u);
                     return 1;
                 }
                 m = -((int)(u - 1));
                 --m;
             } else { /* non-negative */
                 if (u > INT_MAX) {
-                    fprintf(stderr, "build_arr: number too large: "
-                            "%u\n", u);
+                    fprintf(stderr, "%s: number too large: %u\n", __func__,
+                            u);
                     return 1;
                 }
                 m = (int)u;
@@ -516,12 +542,12 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 break;
         }
         if (fr) {
-            fprintf(stderr, "build_arr: got frequency but missing "
-                    "duration\n");
+            fprintf(stderr, "%s: got frequency but missing duration\n",
+                    __func__);
             return 1;
         }
         if (k == max_arr_len) {
-            fprintf(stderr, "build_arr: array length exceeded\n");
+            fprintf(stderr, "%s: array length exceeded\n", __func__);
             return 1;
         }
         if (k < (max_arr_len - 1)) {
@@ -568,19 +594,17 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
     return msp->mmap_ptr;
 }
 
-/* Looks for match of PIO name (e.g. PC2) or TIO name (e.g. TIOB3) in
- * table_arr. If found returns index (>= 0). If not found or error,
- * return -1 . */
+/* Looks for match of TIO name (e.g. TIOB3) in table_arr. If found returns
+ * index (>= 0). If not found or error, return -1 . */
 static int
 find_table_index(const char * cp)
 {
     char b[64];
-    int k, len, ch;
-    int bn = -1;
+    int k, len;
     const struct table_io_t * tp;
 
     if ((! cp) || ((len = strlen(cp)) >= (int)sizeof(b))) {
-        fprintf(stderr, "find_table_index: bad PIO_TIO, too long?\n");
+        fprintf(stderr, "%s: bad TIO, too long?\n", __func__);
         return -1;
     }
     for (k = 0; k < len; ++k)
@@ -592,27 +616,8 @@ find_table_index(const char * cp)
                 return k;
         }
     } else {
-        k = 0;
-        if ('P' == b[k])
-            ++k;
-        ch = b[k];
-        if ((ch < 'A') || (ch > 'E')) {
-            fprintf(stderr, "find_table_index: badly formed PIO_TIO, "
-                    "example PC4, got: %s\n", cp);
-            return -1;
-        }
-        ++k;
-        bn = -1;
-        bn = atoi(b + k);
-            if ((bn < 0) || (bn > 31)) {
-                fprintf(stderr, "find_table_index: expect PIO_TIO "
-                        "number in 0-31 range, got: %s\n", b + k);
-                return -1;
-        }
-        for (tp = table_arr, k = 0; tp->tio_name; ++tp, ++k) {
-            if ((ch == tp->bank) && (bn == tp->bn))
-                return k;
-        }
+        fprintf(stderr, "%s: expect a name that starts with 'T'\n", __func__);
+        return -1;
    }
    return -1;
 }
@@ -621,19 +626,19 @@ find_table_index(const char * cp)
 int
 main(int argc, char * argv[])
 {
-    int mem_fd, k, n, opt, tc_clk_ena, want_clk, mps, bank_ind, peri_id;
-    unsigned int rc, rms, prev_rms, new_cmr, ui, r, pio_mask;
-    unsigned int abcdsr1_val, abcdsr2_val;
+    int mem_fd, k, n, opt, tc_clk_ena, want_clk, mps, peri_id;
+    unsigned int rc, rms, prev_rms, new_cmr, r, pmc_s, pmc_ed;
     int got_div = 0;
     int have_continuous = 0;
-    int div_2tothe = 0;
+    int pcr_gckdiv = 0;
     int res = 1;
+    int tcclks = TC_CMR_TCCLKS_DEF;
+    bool tcclks_given = false;
     int dummy = 0;
     int do_daemon = 0;
     int do_enum = 0;
     int do_init = 0;
     int show_imr = 0;
-    int no_pio = 0;
     int no_sched = 0;
     int do_uninit = 0;
     int mark = 1;
@@ -650,45 +655,33 @@ main(int argc, char * argv[])
     struct elem_t * ep;
     struct table_io_t * tp;
     void * mmap_ptr = (void *)-1;
-    void * ap;
+    volatile unsigned int * mmp;
     struct timespec request;
     FILE * input_filep = NULL;
     struct sched_param spr;
     struct mmap_state mstat;
 
     mem_fd = -1;
-    while ((opt = getopt(argc, argv, "b:dDef:hiIm:MnNp:uvVw:")) != -1) {
+    while ((opt = getopt(argc, argv, "b:c:dDef:hiIm:Mnp:uvVw:")) != -1) {
         switch (opt) {
             break;
         case 'b':
-            if (isdigit(optarg[0])) {
-                n = atoi(optarg);
-                if ((n < 0) || (n > 31)) {
-                    fprintf(stderr, "-b expects an argument between 0 and "
-                            "31, better use 'PC7', for example\n");
-                    return 1;
-                }
-                for (tp = table_arr, k = 0; tp->tio_name; ++tp, ++k) {
-                    if (('C' == tp->bank) && (n == tp->bn))
-                        break;
-                }
-                if (! tp->tio_name) {
-                    fprintf(stderr, "PC%d not associated with TIO output\n",
-                            n);
-                    return 1;
-                }
-                fprintf(stderr, "Warning: PC%d assumed and matches %s, best "
-                        "to use full pio name\n", n, tp->tio_name);
-                t_ind = k;
-            } else {
-                t_ind = find_table_index(optarg);
-                if (t_ind < 0) {
-                    fprintf(stderr, "Unable to match given PIO_TIO of %s "
-                            "with TC associated\nPIO name (e.g. PC3) or TIO "
-                            "name (e.g. TIOA4)\n", optarg);
-                    return -1;
-                }
+            t_ind = find_table_index(optarg);
+            if (t_ind < 0) {
+                fprintf(stderr, "Unable to match given TIO of %s with "
+                        "available names.\nTIOA0-5 and TIOB0-5 are the "
+                        "choices\n", optarg);
+                return 1;
             }
+            break;
+        case 'c':
+            k = atoi(optarg);
+            if ((k < 0) || (k > 7)) {
+                fprintf(stderr, "'-c' option expects 0 to 7\n");
+                return 1;
+            }
+            tcclks = k;
+            tcclks_given = true;
             break;
         case 'd':
             ++dummy;
@@ -737,9 +730,6 @@ main(int argc, char * argv[])
         case 'n':
             ++no_sched;
             break;
-        case 'N':
-            ++no_pio;
-            break;
         case 'p':
             pstring = optarg;
             break;
@@ -782,9 +772,15 @@ main(int argc, char * argv[])
     }
 
     if (do_enum) {
+        const struct value_str_t * vsp;
+
+        printf("Allowable TIO acronyms:\n");
         for (tp = table_arr; tp->tio_name; ++tp)
-            printf("    P%c%d  \t<->\t%s\t[peripheral: %c]\n", tp->bank,
-                   (int)tp->bn, tp->tio_name, (int)tp->peri);
+            printf("    %s\n", tp->tio_name);
+
+        printf("\nTCCLKS values\n");
+        for (vsp = tcclks_arr; vsp->val >= 0; ++vsp)
+            printf("    %d: %s\n", vsp->val, vsp->str);
         return 0;
     }
 
@@ -808,7 +804,11 @@ main(int argc, char * argv[])
     if (fname || pstring) {
         n = build_arr(input_filep, pstring, elem_arr, MAX_ELEMS - 1);
         if (n) {
-            fprintf(stderr, "build_arr() failed\n");
+            if (fname)
+                fprintf(stderr, "unable to decode contents of FN: %s\n",
+                        fname);
+            else
+                fprintf(stderr, "unable to decode '-p F1,D1[,F2,D2...]'\n");
             return 1;
         }
     }
@@ -843,7 +843,7 @@ main(int argc, char * argv[])
     }
 
     if (t_ind < 0) {
-        fprintf(stderr, "'-b PIO_TIO' option is required!\n");
+        fprintf(stderr, "'-b TIO' option is required!\n");
         if ((0 == do_init) && (0 == do_uninit) && (0 == wpen_given) &&
             (0 == show_imr)) {
             fprintf(stderr, "\n");
@@ -851,15 +851,13 @@ main(int argc, char * argv[])
         } else
             fprintf(stderr, "Add '-h' for usage.\n");
         return 1;
-    } else
+    } else {
         tp = table_arr + t_ind;
-    if ((! tp) || (tp->bank < 'A') || (tp->bn > 31)) {
-        fprintf(stderr, "Logic error, tp is NULL or bad\n");
-        return 1;
+        if (verbose > 2)
+            fprintf(stderr, "t_ind=%d, entry points to %s, TCB%d\n", t_ind,
+                    tp->tio_name, tp->tcb);
     }
-    bank_ind = tp->bank - 'A';
-    pio_mask = no_pio ? 0 : (1 << tp->bn);
-    peri_id = (0 == tp->tcb) ? SAMA5D3_PERI_ID_TCB0 : SAMA5D3_PERI_ID_TCB1;
+    peri_id = (0 == tp->tcb) ? SAMA5D2_PERI_ID_TCB0 : SAMA5D2_PERI_ID_TCB1;
 
     if ((mem_fd = open(DEV_MEM, O_RDWR | O_SYNC)) < 0) {
         perror("open of " DEV_MEM " failed");
@@ -874,16 +872,15 @@ main(int argc, char * argv[])
             mmap_ptr = check_mmap(mem_fd, tp->tc_wpmr, &mstat);
             if (NULL == mmap_ptr)
                 goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (tp->tc_wpmr & MAP_MASK);
-            r = *((unsigned long *)ap);
-            printf("Write protect mode: %sabled\n",
-                   ((r & 1) ? "EN" : "DIS"));
+            mmp = mmp_add(mmap_ptr, tp->tc_wpmr & MAP_MASK);
+            r = *mmp;
+            printf("Write protect mode: %sabled\n", ((r & 1) ? "EN" : "DIS"));
         } else if ((0 == wpen) || (1 == wpen)) {
             mmap_ptr = check_mmap(mem_fd, tp->tc_wpmr, &mstat);
             if (NULL == mmap_ptr)
                 return 1;
-            ap = (unsigned char *)mmap_ptr + (tp->tc_wpmr & MAP_MASK);
-            *((unsigned int *)ap) = (A5D3_TCB_WPKEY << 8) | wpen;
+            mmp = mmp_add(mmap_ptr, tp->tc_wpmr & MAP_MASK);
+            *mmp = (A5D2_TCB_WPKEY << 8) | wpen;
         }
         res = 0;
         goto clean_up;
@@ -893,15 +890,15 @@ main(int argc, char * argv[])
         mmap_ptr = check_mmap(mem_fd, tp->tc_imr, &mstat);
         if (NULL == mmap_ptr)
             return 1;
-        ap = (unsigned char *)mmap_ptr + (tp->tc_imr & MAP_MASK);
-        r = *((unsigned long *)ap);
+        mmp = mmp_add(mmap_ptr, tp->tc_imr & MAP_MASK);
+        r = *mmp;
         printf("TC interrupt mask register=0x%x\n", r);
         res = 0;
         goto clean_up;
     }
 
     if (do_daemon)
-        cl_daemonize("a5d3_tc_freq", 1, 1, verbose);
+        cl_daemonize("a5d2_tc_freq", 1, 1, verbose);
 
     if (0 == no_sched) {
         k = sched_get_priority_min(SCHED_FIFO);
@@ -927,92 +924,45 @@ main(int argc, char * argv[])
             fprintf(stderr, "initializing TC\n");
         if (NULL == ((mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat))))
             goto clean_up;
-        ap = (unsigned char *)mmap_ptr + (tp->tc_ccr & MAP_MASK);
-        *((unsigned long *)ap) = 0x2;   /* CLKDIS=1 */
+        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
+        *mmp = TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x\n",
-                    tp->tc_ccr, 0x2);
+            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
+                    tp->tc_ccr, TC_CCR_CLKDIS);
 
-        if (0 == no_pio) {
-            switch (tp->peri) {
-            case 'A':
-                abcdsr1_val = 0;
-                abcdsr2_val = 0;
-                break;
-            case 'B':
-                abcdsr1_val = 1;
-                abcdsr2_val = 0;
-                break;
-            case 'C':
-                abcdsr1_val = 0;
-                abcdsr2_val = 1;
-                break;
-            default:
-                fprintf(stderr, "Logic error, tp is bad\n");
-                goto clean_up;
-            }
-            r = pio_abcdsr1[bank_ind];
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, r, &mstat))))
-                goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (r & MAP_MASK);
-            ui = *((unsigned long *)ap);
-            if (!!(ui & pio_mask) != abcdsr1_val) {
-                if (ui & pio_mask)
-                    ui &= ~pio_mask;
-                else
-                    ui |= pio_mask;
-                *((unsigned long *)ap) = ui;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: PIO_ABCDSR1 addr=0x%x, val=0x%x\n",
-                            r, ui);
-            }
-            r = pio_abcdsr2[bank_ind];
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, r, &mstat))))
-                goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (r & MAP_MASK);
-            ui = *((unsigned long *)ap);
-            if (!!(ui & pio_mask) != abcdsr2_val) {
-                if (ui & pio_mask)
-                    ui &= ~pio_mask;
-                else
-                    ui |= pio_mask;
-                *((unsigned long *)ap) = ui;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote:  PIO_ABCDSR2 addr=0x%x, "
-                            "val=0x%x\n", r, ui);
-            }
-
-            r = pio_pdr[bank_ind];
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, r, &mstat))))
-                goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (r & MAP_MASK);
-            *((unsigned long *)ap) = pio_mask;
-            if (verbose > 1)
-                fprintf(stderr, "wrote: PIO_PDR addr=0x%x, val=0x%x\n", r,
-                        pio_mask);
+        if (peri_id < 32) {
+            pmc_s = PMC_PCSR0;
+            pmc_ed = PMC_PCER0;
+            r = (1 << peri_id);
+        } else {
+            pmc_s = PMC_PCSR1;
+            pmc_ed = PMC_PCER1;
+            r = (1 << (peri_id - 32));
         }
-
-        if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCSR0, &mstat))))
+        if (NULL == ((mmap_ptr = check_mmap(mem_fd, pmc_s, &mstat))))
             goto clean_up;
-        ap = (unsigned char *)mmap_ptr + (PMC_PCSR0 & MAP_MASK);
-        r = (1 << peri_id);     /* assume/know it is < 32 */
-        if (0 == (*((unsigned long *)ap) & r)) {
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCER0, &mstat))))
+        mmp = mmp_add(mmap_ptr, pmc_s & MAP_MASK);
+        if (verbose > 2)
+            fprintf(stderr, "read: PMC_PCSR%d addr=0x%x, val=0x%x\n",
+                    ((peri_id < 32) ? 0 : 1), pmc_s, *mmp);
+        if (0 == (*mmp & r)) {
+            if (verbose > 2)
+                fprintf(stderr, "    and initializing PMC\n");
+            if (NULL == ((mmap_ptr = check_mmap(mem_fd, pmc_ed, &mstat))))
                 goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (PMC_PCER0 & MAP_MASK);
-            *((unsigned long *)ap) = r;
+            mmp = mmp_add(mmap_ptr, pmc_ed & MAP_MASK);
+            *mmp = r;
             if (verbose > 1)
-                fprintf(stderr, "wrote: PMC_PCER0 addr=0x%x, val=0x%x\n",
-                        PMC_PCER0, r);
-
+                fprintf(stderr, "wrote: PMC_PCER%d addr=0x%x, val=0x%x\n",
+                        ((peri_id < 32) ? 0 : 1), pmc_ed, r);
             if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCR, &mstat))))
                 goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (PMC_PCR & MAP_MASK);
+            mmp = mmp_add(mmap_ptr,  PMC_PCR & MAP_MASK);
             /* write a read cmd for given bn (in the PID field) */
-            *((volatile unsigned long *)ap) = peri_id;
+            *mmp = peri_id;
             /* now read back result, DIV field should be populated */
-            r = *((volatile unsigned long *)ap);
-            div_2tothe = ((r & 0x30000) >> 16);
+            r = *mmp;
+            pcr_gckdiv = (PMC_PCR_GCKDIV_MSK & r) >> PMC_PCR_GCKDIV_SHIFT;
             ++got_div;
             if (verbose)
                 fprintf(stderr, "read PMC_PCR got 0x%x\n", r);
@@ -1044,20 +994,22 @@ main(int argc, char * argv[])
                     if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCR,
                                                         &mstat))))
                         goto clean_up;
-                    ap = (unsigned char *)mmap_ptr + (PMC_PCR & MAP_MASK);
+                    mmp = mmp_add(mmap_ptr, PMC_PCR & MAP_MASK);
                     /* write a read cmd for given bn (in the PID field) */
-                    *((volatile unsigned long *)ap) = peri_id;
+                    *mmp = peri_id;
                     /* now read back result, DIV field should be populated */
-                    r = *((volatile unsigned long *)ap);
-                    div_2tothe = ((r & 0x30000) >> 16);
+                    r = *mmp;
+                    pcr_gckdiv = ((r & 0x30000) >> 16);
+                    pcr_gckdiv = (PMC_PCR_GCKDIV_MSK & r) >>
+                                 PMC_PCR_GCKDIV_SHIFT;
                     ++got_div;
                     if (verbose)
                         fprintf(stderr, "read PMC_PCR got 0x%x\n", r);
                 }
-                if (div_2tothe)
-                    tc_tclock1 /= (1 << div_2tothe);
+                if (pcr_gckdiv)
+                    tc_tclock1 /= (pcr_gckdiv + 1);
 
-                /* since the SAMA5D3 has 32 bit counters just divide down the
+                /* since the SAMA5D2 has 32 bit counters just divide down the
                  * highest speed clock (master_ clock/2: 66 MHz) */
                 rc = tc_tclock1 / ep->frequency;
                 if (rc < 2) {
@@ -1081,18 +1033,22 @@ main(int argc, char * argv[])
                         k + 1, ep->frequency, want_clk);
                 goto clean_up;
             }
+            if (tcclks_given)
+                new_cmr = tcclks;       /* override want_clk, think about */
             new_cmr |= ((tp->is_tioa == ms_invert) ? TC_CMR_MS_INV_MASK :
                                                      TC_CMR_MS_MASK);
             mmap_ptr = check_mmap(mem_fd, tp->tc_cmr, &mstat);
             if (NULL == mmap_ptr)
                 goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (tp->tc_cmr & MAP_MASK);
-            if (new_cmr != *((unsigned long *)ap)) {
-                *((unsigned long *)ap) = new_cmr;
+            mmp = mmp_add(mmap_ptr, tp->tc_cmr & MAP_MASK);
+            if (new_cmr != *mmp) {
+                *mmp = new_cmr;
                 if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_CMR addr=0x%x, val=0x%lx\n",
-                            tp->tc_cmr, *((unsigned long *)ap));
-            }
+                    fprintf(stderr, "wrote: TC_CMR addr=0x%x, val=0x%x\n",
+                            tp->tc_cmr, *mmp);
+            } else if (verbose > 2)
+                fprintf(stderr," did not write TC_CMR addr=0x%x because "
+                        "val=0x%x already\n", tp->tc_cmr, *mmp);
             // Caclculate the mark space ratio in order to set RA and RB
             mps = mark + space;
             if (rc > USHRT_MAX) {
@@ -1132,8 +1088,8 @@ main(int argc, char * argv[])
                 mmap_ptr = check_mmap(mem_fd, tp->tc_rc, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_rc & MAP_MASK);
-                *((unsigned long *)ap) = rc;
+                mmp = mmp_add(mmap_ptr, tp->tc_rc & MAP_MASK);
+                *mmp = rc;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RC addr=0x%x, val=0x%x\n",
                             tp->tc_rc, rc);
@@ -1141,16 +1097,16 @@ main(int argc, char * argv[])
                 mmap_ptr = check_mmap(mem_fd, tp->tc_ra, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_ra & MAP_MASK);
-                *((unsigned long *)ap) = rms;
+                mmp = mmp_add(mmap_ptr, tp->tc_ra & MAP_MASK);
+                *mmp = rms;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RA addr=0x%x, val=0x%x\n",
                             tp->tc_ra, rms);
                 mmap_ptr = check_mmap(mem_fd, tp->tc_rb, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_rb & MAP_MASK);
-                *((unsigned long *)ap) = rc - rms;
+                mmp = mmp_add(mmap_ptr, tp->tc_rb & MAP_MASK);
+                *mmp = rc - rms;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RB addr=0x%x, val=0x%x\n",
                             tp->tc_rb, rc - rms);
@@ -1159,16 +1115,16 @@ main(int argc, char * argv[])
                 mmap_ptr = check_mmap(mem_fd, tp->tc_ra, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_ra & MAP_MASK);
-                *((unsigned long *)ap) = rms;
+                mmp = mmp_add(mmap_ptr, tp->tc_ra & MAP_MASK);
+                *mmp = rms;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RA addr=0x%x, val=0x%x\n",
                             tp->tc_ra, rms);
                 mmap_ptr = check_mmap(mem_fd, tp->tc_rb, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_rb & MAP_MASK);
-                *((unsigned long *)ap) = rc - rms;
+                mmp = mmp_add(mmap_ptr, tp->tc_rb & MAP_MASK);
+                *mmp = rc - rms;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RB addr=0x%x, val=0x%x\n",
                             tp->tc_rb, rc - rms);
@@ -1176,8 +1132,8 @@ main(int argc, char * argv[])
                 mmap_ptr = check_mmap(mem_fd, tp->tc_rc, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_rc & MAP_MASK);
-                *((unsigned long *)ap) = rc;
+                mmp = mmp_add(mmap_ptr, tp->tc_rc & MAP_MASK);
+                *mmp = rc;
                 if (verbose > 1)
                     fprintf(stderr, "wrote: TC_RC addr=0x%x, val=0x%x\n",
                             tp->tc_rc, rc);
@@ -1188,12 +1144,12 @@ main(int argc, char * argv[])
                 mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
                 if (NULL == mmap_ptr)
                     goto clean_up;
-                ap = (unsigned char *)mmap_ptr + (tp->tc_ccr & MAP_MASK);
-                // enable clock (0x1) ORed with software trigger (0x4)
-                *((unsigned long *)ap) = 0x5;
+                mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
+                *mmp = TC_CCR_SWTRG | TC_CCR_CLKEN;
                 if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x\n",
-                            tp->tc_ccr, 0x5);
+                    fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
+                            "[SWTRG | CLKEN]\n", tp->tc_ccr,
+                            TC_CCR_SWTRG | TC_CCR_CLKEN);
                 tc_clk_ena = 1;
             }
         } else if (tc_clk_ena) {
@@ -1201,12 +1157,12 @@ main(int argc, char * argv[])
             mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
             if (NULL == mmap_ptr)
                 goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (tp->tc_ccr & MAP_MASK);
-            // disable clock (0x1) ORed with software trigger (0x4)
-            *((unsigned long *)ap) = 0x6;
+            mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
+            *mmp = TC_CCR_SWTRG | TC_CCR_CLKDIS;
             if (verbose > 1)
-                fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x\n",
-                        tp->tc_ccr, 0x6);
+                fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
+                        "[SWTRG | CLKDIS]\n", tp->tc_ccr,
+                        TC_CCR_SWTRG | TC_CCR_CLKDIS);
             tc_clk_ena = 0;
         }
 
@@ -1230,12 +1186,12 @@ main(int argc, char * argv[])
         mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
         if (NULL == mmap_ptr)
             goto clean_up;
-        ap = (unsigned char *)mmap_ptr + (tp->tc_ccr & MAP_MASK);
-        // disable clock (0x1) ORed with software trigger (0x4)
-        *((unsigned long *)ap) = 0x6;
+        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
+        *mmp = TC_CCR_SWTRG | TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x\n",
-                    tp->tc_ccr, 0x6);
+            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
+                    "[SWTRG | CLKDIS]\n", tp->tc_ccr,
+                    TC_CCR_SWTRG | TC_CCR_CLKDIS);
         tc_clk_ena = 0;
     }
 
@@ -1244,24 +1200,11 @@ main(int argc, char * argv[])
         mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
         if (NULL == mmap_ptr)
             goto clean_up;
-        ap = (unsigned char *)mmap_ptr + (tp->tc_ccr & MAP_MASK);
-        *((unsigned long *)ap) = 0x2;
+        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
+        *mmp = TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x\n",
-                    tp->tc_ccr, 0x2);
-
-        if (0 == no_pio) {
-            // Enable normal, generic PIO action on PIO_TIO
-            r = pio_per[bank_ind];
-            mmap_ptr = check_mmap(mem_fd, r, &mstat);
-            if (NULL == mmap_ptr)
-                goto clean_up;
-            ap = (unsigned char *)mmap_ptr + (r & MAP_MASK);
-            *((unsigned long *)ap) = pio_mask;
-            if (verbose > 1)
-                fprintf(stderr, "wrote: PIO_PER addr=0x%x, val=0x%x\n",
-                        r, pio_mask);
-        }
+            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
+                    tp->tc_ccr, TC_CCR_CLKDIS);
     }
     res = 0;
 

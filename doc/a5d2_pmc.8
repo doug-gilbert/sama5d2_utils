@@ -3,8 +3,8 @@
 a5d2_pmc \- Power Management Controller (PMC) utility
 .SH SYNOPSIS
 .B a5d2_tc_freq
-[\fI\-a ACRON\fR] [\fI\-d DIV\fR] [\fI\-D\fR] [\fI\-e\fR] [\fI\-E\fR]
-[\fI\-h\fR] [\fI\-p\fR] [\fI\-s\fR] [\fI\-v\fR] [\fI\-V\fR]
+[\fI\-a ACRON\fR] [\fI\-c GCS\fR] [\fI\-d DIV\fR] [\fI\-D\fR] [\fI\-e\fR]
+[\fI\-E\fR] [\fI\-h\fR] [\fI\-p\fR] [\fI\-s\fR] [\fI\-v\fR] [\fI\-V\fR]
 [\fI\-w WPEN\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
@@ -21,7 +21,7 @@ list peripheral clocks that are enabled.
 .SH OPTIONS
 .TP
 \fB\-a\fR \fIACRON\fR
-\fIACRON\fR is an acronym for a system or peripheral clock. To enumerate the
+\fIACRON\fR is an acronym for a system or peripheral/generic clock. To enumerate the
 available acronyms, use the \fI\-e\fR option. Alternatively a number may be
 given which is interpreted as an identifier; in which case the \fI\-p\fR or
 \fI\-s\fR oprion must be given to indicate whether the identifier is for a

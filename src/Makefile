@@ -3,11 +3,13 @@ PREFIX=/usr/local
 INSTDIR=$(DESTDIR)/$(PREFIX)/bin
 INSTALL=/usr/bin/install
 
+CC = gcc
 ## CC=arm-linux-gnueabi-gcc 
 # for C++/clang testing
 ## CC = g++ -std=c++11
 ## CC = g++
 ## CC = clang
+## CC = clang++
 
 
 PROGS     = setbits readbits is_foxlx is_foxg20 hex2tty mem2io \

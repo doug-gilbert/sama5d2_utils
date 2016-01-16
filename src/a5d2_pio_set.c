@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2016 Douglas Gilbert.
+ * Copyright (c) 2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,10 +28,10 @@
  */
 
 /************************************************************************
- * a5d3_pio_set.c
+ * a5d2_pio_set.c
  *
- * Utility for setting SAMA5D3 SoC PIO line attributes.
- * The SAMA5D3 has 5 PIOs: PIOA, PIOB, PIOC, PIOD and PIOE. Each contain
+ * Utility for setting SAMA5D2 SoC PIO line attributes.
+ * The SAMA5D2 has 4 PIOs: PIOA, PIOB, PIOC and PIOD. Each contain
  * 32 lines (GPIOs), for example PIOA contains PA0 to PA31.
  * This utiity uses memory mapped IO.
  *
@@ -41,6 +41,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <string.h>
 #include <unistd.h>
@@ -53,10 +54,10 @@
 #include <libgen.h>
 
 
-static const char * version_str = "1.02 20160104";
+static const char * version_str = "1.00 20160115";
 
 
-#define PIO_BANKS_SAMA5D3 5  /* PA0-31, PB0-31, PC0-31, PD0-32 and PE0-31 */
+#define PIO_BANKS_SAMA5D2 4  /* PA0-31, PB0-31, PC0-31 and PD0-32 */
 #define LINES_PER_BANK 32
 #define MAP_SIZE 4096   /* assume to be power of 2 */
 #define MAP_MASK (MAP_SIZE - 1)
@@ -68,45 +69,83 @@ static const char * version_str = "1.02 20160104";
  * numbered bank and corresponded to PIOA. Now (in lk 3.7)
  * /sys/class/gpio/gpiochip0 exists and corresponds to PIOA.
  *
- * SAMA5D3 base PIO addresses are 0xfffff200 (A), 0xfffff400 (B),
- * 0xfffff600 (C), 0xfffff800 (D) and 0xfffffa00 (E).
  */
 
-#define SAMA5D3_PIO_WPKEY 0x50494f      /* "PIO" in ASCII */
+#define SAMA5D2_PIO_WPKEY 0x50494f      /* "PIO" in ASCII */
+#define SAMA5D2_PIO_FRZKEY 0x494F46     /* "IOF" in ASCII */
+
+#define PIO_WPMR 0xfc0385e0     /* Write protection mode (rw) */
+#define PIO_WPSR 0xfc0385e4     /* Write protection status (ro) */
+#define S_PIO_SCDR 0xfc039500   /* Secure slow clock divider debouncing(rw) */
+#define S_PIO_WPMR 0xfc0395e0   /* Secure write protection mode (rw) */
+#define S_PIO_WPSR 0xfc0395e4   /* Secure write protection status (r0) */
+
+#define FUNC_GPIO 0
+#define PERI_A 1
+#define PERI_B 2
+#define PERI_C 3
+#define PERI_D 4
+#define PERI_E 5
+#define PERI_F 6
+#define PERI_G 7
+#define MAX_PERIPH_NUM 7
+#define DIR_IO 0    /* print as "[io]" */
+#define DIR_I 1     /* print as "[i]" */
+#define DIR_O 2     /* print as "[o]" */
+#define DIR_OO 3    /* Atmel, what does this mean? Print as "[output]" */
+#define DIR_UNK 4   /* ??, print as "[ ]" */
+#define CFGR_FUNC_MSK 0x7
+#define CFGR_DIR_MSK (1 << 8)   /* 0 -> pure input; 1 -> output */
+#define CFGR_PUEN_MSK (1 << 9)  /* pull-up enable */
+#define CFGR_PDEN_MSK (1 << 10) /* pull-down enable */
+#define CFGR_IFEN_MSK (1 << 12) /* input filter enable */
+#define CFGR_IFSCEN_MSK (1 << 13)       /* input filter slow clock enable */
+#define CFGR_OPD_MSK (1 << 14)  /* open drain (like open collector) */
+#define CFGR_SCHMITT_MSK (1 << 15)      /* Schmitt tripper (on input) */
+                                        /* N.B. 0 -> enabled, 1 -> dis */
+#define CFGR_DRVSTR_MSK 0x30000         /* 0, 1 -> LO; 2 -> ME; 3 -> HI */
+#define CFGR_DRVSTR_SHIFT 16
+#define CFGR_EVTSEL_MSK 0x7000000       /* 0 -> falling; 1 -> rising, ... */
+#define CFGR_EVTSEL_SHIFT 24
+#define CFGR_PCFS_MSK (1 << 29) /* physical configuration freezes status */
+#define CFGR_ICFS_MSK (1 << 30) /* interrupt configuration freezes status */
+#define IOFR_FINT_MSK (1 << 1)  /* freeze: ifen, ifscen, evtsel */
+#define IOFR_FPHY_MSK (1 << 0)  /* freeze: func, dir puen, pden, opd, */
+                                /* schmitt + drvstr */
+
 
 struct opts_t {
-    int do_pio;
-    int peri_a;
-    int peri_b;
-    int peri_c;
-    int peri_d;
+    int dir;
+    int do_func;
     int enumerate;
-    int en_fall_low;
-    int en_ris_high;
-    int en_output;
-    int di_output;
-    int en_glitch;
-    int di_glitch;
+    int evtsel;
+    int freeze_phy0int1b2;
+    int en_if;
+    int di_if;
     int en_interrupt;
     int di_interrupt;
-    int en_edge;
-    int en_level;
-    int en_multi;
-    int di_multi;
-    int en_pullup;
-    int di_pullup;
+    int en_opd;
+    int di_opd;
+    int en_pullup1dn2;
+    int di_pullup1dn2;
     int out_data;
     int en_schmitt;
     int di_schmitt;
-    int en_if_slow_clk;
-    int di_if_slow_clk;
-    int wp_given;
+    int en_if_slow;
+    int di_if_slow;
     int wpen;
-    int scdr_given;
     int scdr_div;
-    int iod_given;
-    int iod;
+    int drvstr;
     int verbose;
+    unsigned int msk;
+    unsigned int dat;
+    bool evtsel_given;
+    bool freeze_given;
+    bool wp_given;
+    bool scdr_given;
+    bool drvstr_given;
+    bool wr_dat_given;
+    bool dir_given;
 };
 
 struct mmap_state {
@@ -115,70 +154,47 @@ struct mmap_state {
     int mmap_ok;
 };
 
-static unsigned int pio_per[] = {0xfffff200, 0xfffff400, 0xfffff600,
-                0xfffff800, 0xfffffa00};   /* PIO Enable Register */
-static unsigned int pio_pdr[] = {0xfffff204, 0xfffff404, 0xfffff604,
-                0xfffff804, 0xfffffa04};   /* PIO Disable Register */
-static unsigned int pio_oer[] = {0xfffff210, 0xfffff410, 0xfffff610,
-                0xfffff810, 0xfffffa10};   /* Output Enable Reg. */
-static unsigned int pio_odr[] = {0xfffff214, 0xfffff414, 0xfffff614,
-                0xfffff814, 0xfffffa14};   /* Output Disable Reg. */
-static unsigned int pio_osr[] = {0xfffff218, 0xfffff418, 0xfffff618,
-                0xfffff818, 0xfffffa18};   /* Output Status Reg. */
-static unsigned int pio_ifer[] = {0xfffff220, 0xfffff420, 0xfffff620,
-                0xfffff820, 0xfffffa20};  /* glitch Input Filter Ena */
-static unsigned int pio_ifdr[] = {0xfffff224, 0xfffff424, 0xfffff624,
-                0xfffff824, 0xfffffa24};  /* glitch Input Filter Dis */
-static unsigned int pio_ier[] = {0xfffff240, 0xfffff440, 0xfffff640,
-                0xfffff840, 0xfffffa40};   /* Interrupt Enable Reg. */
-static unsigned int pio_idr[] = {0xfffff244, 0xfffff444, 0xfffff644,
-                0xfffff844, 0xfffffa44};   /* Interrupt Disable Reg. */
-static unsigned int pio_mder[] = {0xfffff250, 0xfffff450, 0xfffff650,
-                0xfffff850, 0xfffffa50};  /* Multi-driver Enable */
-static unsigned int pio_mddr[] = {0xfffff254, 0xfffff454, 0xfffff654,
-                0xfffff854, 0xfffffa54};  /* Multi-driver Disable */
-static unsigned int pio_puer[] = {0xfffff264, 0xfffff464, 0xfffff664,
-                0xfffff864, 0xfffffa64};  /* Pull-Up Enable */
-static unsigned int pio_pudr[] = {0xfffff260, 0xfffff460, 0xfffff660,
-                0xfffff860, 0xfffffa60};  /* Pull-Up Disable */
-static unsigned int pio_sodr[] = {0xfffff230, 0xfffff430, 0xfffff630,
-                0xfffff830, 0xfffffa30};  /* Set Output Data Reg. */
-static unsigned int pio_codr[] = {0xfffff234, 0xfffff434, 0xfffff634,
-                0xfffff834, 0xfffffa34};  /* Clear Output Data Reg. */
-static unsigned int pio_abcdsr1[] = {0xfffff270, 0xfffff470, 0xfffff670,
-                0xfffff870, 0xfffffa70};/* Peripheral Select 1 */
-static unsigned int pio_abcdsr2[] = {0xfffff274, 0xfffff474, 0xfffff674,
-                0xfffff874, 0xfffffa74};/* Peripheral Select 2 */
-static unsigned int pio_ppddr[] = {0xfffff290, 0xfffff490, 0xfffff690,
-                0xfffff890, 0xfffffa90};  /* Pad Pull-Down Dis. */
-static unsigned int pio_ppder[] = {0xfffff294, 0xfffff494, 0xfffff694,
-                0xfffff894, 0xfffffa94};  /* Pad Pull-Down Ena. */
-static unsigned int pio_aimer[] = {0xfffff2b0, 0xfffff4b0, 0xfffff6b0,
-                0xfffff8b0, 0xfffffab0}; /* Additional Interrupt Modes Ena */
-static unsigned int pio_aimdr[] = {0xfffff2b4, 0xfffff4b4, 0xfffff6b4,
-                0xfffff8b4, 0xfffffab4}; /* Additional Interrupt Modes Dis */
-static unsigned int pio_esr[] = {0xfffff2c0, 0xfffff4c0, 0xfffff6c0,
-                0xfffff8c0, 0xfffffac0};   /* Edge Select Reg. */
-static unsigned int pio_lsr[] = {0xfffff2c4, 0xfffff4c4, 0xfffff6c4,
-                0xfffff8c4, 0xfffffac4};   /* Level Select Reg. */
-static unsigned int pio_fellsr[] = {0xfffff2d0, 0xfffff4d0, 0xfffff6d0,
-                0xfffff8d0, 0xfffffad0}; /* Falling Edge / Low Level Select */
-static unsigned int pio_rehlsr[] = {0xfffff2d4, 0xfffff4d4, 0xfffff6d4,
-                0xfffff8d4, 0xfffffad4}; /* Rising Edge / High Level Select */
-static unsigned int pio_schmitt[] = {0xfffff300, 0xfffff500, 0xfffff700,
-                0xfffff900, 0xfffffb00};
-static unsigned int pio_ifscdr[] = {0xfffff280, 0xfffff480, 0xfffff680,
-                0xfffff880, 0xfffffa80}; /* Input Filter Slow Clock Disable */
-static unsigned int pio_ifscer[] = {0xfffff284, 0xfffff484, 0xfffff684,
-                0xfffff884, 0xfffffa84}; /* Input Filter Slow Clock Enable */
-static unsigned int pio_wpmr[] = {0xfffff2e4, 0xfffff4e4, 0xfffff6e4,
-                0xfffff8e4, 0xfffffae4}; /* Write Protect Mode */
-static unsigned int pio_scdr[] = {0xfffff28c, 0xfffff48c, 0xfffff68c,
-                0xfffff88c, 0xfffffa8c}; /* Slow Clock Divider */
-static unsigned int pio_driver1[] = {0xfffff314, 0xfffff514, 0xfffff714,
-                        0xfffff914, 0xfffffb14}; /* IO drive 1 */
-static unsigned int pio_driver2[] = {0xfffff318, 0xfffff518, 0xfffff718,
-                        0xfffff918, 0xfffffb18}; /* IO drive 2 */
+
+static unsigned int pio_mskr[] = {0xfc038000, 0xfc038040, 0xfc038080,
+                        0xfc0380c0};    /* Mask (rw) */
+static unsigned int pio_cfgr[] = {0xfc038004, 0xfc038044, 0xfc038084,
+                        0xfc0380c4};    /* Configuration (rw) */
+#if 0
+static unsigned int pio_pdsr[] = {0xfc038008, 0xfc038048, 0xfc038088,
+                        0xfc0380c8};    /* Pin data status (ro) */
+static unsigned int pio_locksr[] = {0xfc03800c, 0xfc03804c, 0xfc03808c,
+                        0xfc0380cc};    /* Lock status (ro) */
+#endif
+static unsigned int pio_sodr[] = {0xfc038010, 0xfc038050, 0xfc038090,
+                        0xfc0380d0};    /* Set output data (wo) */
+static unsigned int pio_codr[] = {0xfc038014, 0xfc038054, 0xfc038094,
+                        0xfc0380d4};    /* Clear output data (wo) */
+static unsigned int pio_odsr[] = {0xfc038018, 0xfc038058, 0xfc038098,
+                        0xfc0380d8};    /* Output data status (rw) */
+static unsigned int pio_ier[] = {0xfc038020, 0xfc038060, 0xfc0380a0,
+                        0xfc0380e0};    /* Interrupt enable (wo) */
+static unsigned int pio_idr[] = {0xfc038024, 0xfc038064, 0xfc0380a4,
+                        0xfc0380e4};    /* Interrupt disable (wo) */
+#if 0
+static unsigned int pio_imr[] = {0xfc038028, 0xfc038068, 0xfc0380a8,
+                        0xfc0380e8};    /* Interrupt mask (ro) */
+static unsigned int pio_isr[] = {0xfc03802c, 0xfc03806c, 0xfc0380ac,
+                        0xfc0380ec};    /* Interrupt status (ro) */
+#endif
+static unsigned int pio_iofr[] = {0xfc03803c, 0xfc03807c, 0xfc0380bc,
+                        0xfc0380fc};    /* I/O freeze (wo) */
+
+#if 0
+static unsigned int s_pio_sionr[] = {0xfc039030, 0xfc039070, 0xfc0390b0,
+                        0xfc0390f0};    /* Secure I/O non-secure (wo) */
+static unsigned int s_pio_siosr[] = {0xfc039034, 0xfc039074, 0xfc0390b4,
+                        0xfc0390f4};    /* Secure I/O secure (wo) */
+static unsigned int s_pio_iossr[] = {0xfc039038, 0xfc039078, 0xfc0390b8,
+                        0xfc0390f8};    /* Secure I/O security status (ro) */
+static unsigned int s_pio_iofr[] = {0xfc03903c, 0xfc03907c, 0xfc0390bc,
+                        0xfc0390fc};    /* Secure I/O freeze (wo) */
+#endif
+
 
 
 static void
@@ -186,64 +202,61 @@ usage(int help_val)
 {
     if (1 == help_val)
         fprintf(stderr, "Usage: "
-                "a5d3_pio_set [-b <bn>] [-d <div>] [-D <iod>] [-e] [-f|F] "
-                "[-g|G]\n"
-                "                    [-h] [-i|I] [-ii|II] [-l|L] [-m|M] "
-                "[-o|O] [-p <port>]\n"
-                "                    [-s <P_A_B_C_D>] [-S <n>] [-t|T] [-u|U] "
-                "[-uu|UU]\n"
-                "                    [-v] [-V] [-w <wpen>] [-z|Z]\n"
+                "a5d2_pio_set [-b <bn>] [-d <div>] [-D <drvstr>] [-e] "
+                "[-E <evt>]\n"
+                "                    [-f <func>] [-F <phy0int1b2>] [-g|G] "
+                "[-h] [-i|I]\n"
+                "                    [-m|M] [-p <port>] [-r <dir>] "
+                "[-s <func>] [-S <n>]\n"
+                "                    [-t|T] [-u|U] [-uu|UU] [-v] [-V] "
+                "[-w <wpen>]\n"
+                "                    [-X <msk,dat>] [-z|Z]\n"
                 "  where:\n"
-                "    -b <bn>      bit number within port (0 to 31)."
-                "Also\n"
-                "                 accepts prefix like 'pb' or just 'b' for "
+                "    -b <bn>      bit number within port (0 to 31). Also "
+                "accepts\n"
+                "                 prefixes like 'pb' or just 'b' for "
                 "<port>.\n"
                 "                 Example: '-b PC7' equivalent to '-p c "
                 "-b 7'\n"
                 "    -d <div>     slow clock divider [period=2*(<div>+1)"
-                "*Tslow_clock]\n"
-                "    -D <iod>     IO drive: 0->LO, 1->LO, 2->ME, 3->HI\n"
+                "*slow_clock_per]\n"
+                "    -D <drvstr>     IO drive: 0->LO, 1->LO, 2->ME, 3->HI\n"
                 "    -e           enumerate pin names with corresponding "
                 "kernel pin\n"
-                "    -f           set interrupt source as falling edge or "
-                "low level event\n"
-                "    -F           set interrupt source as rising edge or "
-                "high level event\n"
-                "    -g           disables glitch input filter\n"
-                "    -G           enables glitch input filter\n"
+                "    -E <evt>     <evt> is input event: 0 -> falling edge, "
+                "1 ->\n"
+                "                 rising, 2 -> both edges, 3 -> low level, "
+                "4 -> high\n"
+                "    -f <func>    select line function: P->PIO, "
+                "A->peri_A\n"
+                "                 B->peri_B, C, D, E, F or G); "
+                "alternatively\n"
+                "                 <func> may be a number: 0->PIO(GPIO), "
+                "1->peri_A,\n"
+                "                 2->peri_B and so on until 7->peri_G\n"
+                "    -F <phy0int1b2>    freeze config: 0 -> physical, "
+                "1 -> interrupt\n"
+                "                       2 -> physical+interrupt\n"
+                "    -g|G         disable|enable (glitch) input filter\n"
                 "    -h           print usage message; use twice for "
                 "more help\n"
-                "    -i           interrupt disable. Use twice to "
-                "disable\n"
-                "                 additional interrupt modes\n"
-                "    -I           interrupt enable. Use twice to "
-                "enable\n"
-                "                 additional interrupt modes\n"
-                "    -l           set interrupt source as edge event\n"
-                "    -L           set interrupt source as level event\n"
-                "    -m           disables multi-drive (open drain)\n"
-                "    -M           enables multi-drive (open drain)\n"
-                "    -o           output disable (make GPIO input only)\n"
-                "    -O           output enable (in generic PIO mode only)\n"
+                "    -i|I         interrupt disable|enable\n"
+                "    -m|M         disable|enable open drain (formerly "
+                "multi-drive)\n"
                 "    -p <port>    port bank ('A' to 'D') or gpio kernel "
                 "line number\n"
-                "    -s <P_A_B_C_D>    select line mode: P->PIO, "
-                "A->peripheral_A\n"
-                "                      B->peripheral_B, C or D)\n"
-                "    -S <n>       set output data line to [<n> mod 2] (<n> "
-                "is 0 to 3)\n"
-                "                 if 0 or 1 then does an output enable if "
-                "disabled\n"
-                "    -t           disables Schmitt trigger on input\n"
-                "    -T           enables Schmitt trigger on input\n"
-                "    -u           disables internal pull-up. Use twice "
-                "to disable\n"
-                "                 internal pull-down\n"
-                "    -U           enables internal pull-up. Use twice "
-                "to enable\n"
-                "                 internal pull-down. Example: switch PC12 "
-                "from\n"
-                "                 pull-up to pull-down: '-b PC12 -u -UU'\n"
+                "    -r <dir>     direction: 0 -> pure input; 1 -> enabled "
+                "for output\n"
+                "    -s <func>    same as '-f <func>'\n"
+                "    -S <n>       set output data line to <n> (0 -> low, "
+                "1 -> high)\n"
+                "    -t|T         disable|enable Schmitt trigger on input\n"
+                "    -u|U         disable|enable internal pull-up. Use twice "
+                "to\n"
+                "                 disable|enable internal pull-down. "
+                "Example:\n"
+                "                 switch PC12 from pull-up to pull-down:\n"
+                "                     '-b PC12 -u -UU'\n"
                 "    -v           increase verbosity (multiple times for "
                 "more)\n"
                 "    -V           print version string then exit\n"
@@ -251,42 +264,63 @@ usage(int help_val)
                 "<wpen>\n"
                 "                 0->disabled (def, no write protection), "
                 "1->enabled\n"
-                "    -z           disables input filter slow clock\n"
-                "    -Z           enables input filter slow clock\n\n"
-                "Set SAMA5D3 SoCs PIO attributes. Uses memory mapped IO to "
+                "    -X <msk,dat>   write <dat> to <port> for those lines set "
+                "in <msk>\n"
+                "                   <msk> and <dat> are 32 bit hexadecimal "
+                "values\n"
+                "    -z|Z         disable|enable input filter slow clock\n"
+                "Set SAMA5D2 SoCs PIO attributes. Uses memory mapped IO to "
                 "access PIO\nregisters directly. Bypasses kernel.\n"
                );
     else    /* -hh */
         fprintf(stderr, "Usage: "
-                "a5d3_pio_set [-b <bn>] [-d <div>] [-D <iod>] [-e] [-f|F] "
-                "[-g|G]\n"
-                "                    [-h] [-i|I] [-ii|II] [-l|L] [-m|M] "
-                "[-o|O] "
-                "[-p <port>]\n"
-                "                    [-s <P_A_B_C_D>] [-S <n>] [-t|T] [-u|U] "
-                "[-uu|UU]\n"
-                "                    [-v] [-V] [-w <wpen>] [-z|Z]\n\n"
+                "a5d2_pio_set [-b <bn>] [-d <div>] [-D <drvstr>] [-e] "
+                "[-E <evt>]\n"
+                "                    [-f <func>] [-F <phy0int1b2>] [-g|G] "
+                "[-h] [-i|I]\n"
+                "                    [-m|M] [-p <port>] [-r <dir>] "
+                "[-s <func>] [-S <n>]\n"
+                "                    [-t|T] [-u|U] [-uu|UU] [-v] [-V] "
+                "[-w <wpen>]\n"
+                "                    [-X <msk,dat>] [-z|Z]\n\n"
                 "Use '-h' to get an explanation of the above command "
                 "line options.\n\n"
-                "Setting the output data line (e.g. with '-S 1') can fail "
-                "to change the\nexternal line for several reasons. The line "
-                "must be in GPIO/PIO mode\n('-s P'). Output must enabled "
-                "('-O') but this will be set if '-S 0' or\n'-S 1' is given. "
-                "If the line is set high (i.e. '-S 1') and if\nmulti-drive "
-                "is enabled ('-M') then an internal or external pull-up is\n"
+                "Setting the output data line (e.g. with '-S 1') only changes "
+                "the\nexternal line when <func> is 0 (or 'P') . "
+                "If the line is set high\n(i.e. '-S 1') and if 'open drain' "
+                "is enabled ('-M') then an internal\nor external pull-up is "
                 "needed to see a high level on the external line.\n\n"
                 "A line's internal pull-up and pull-down (resistor) cannot "
                 "be active\n(enabled) at the same time. The policy of the "
-                "SAMA5D3 is to discard any\nsubsequent conflicting enables. "
-                "So the first to be enabled remains.\n"
+                "SAMA5D2 is to ignore\nthe pull-down when both are given."
+                "\n\nOnce a GPIO line is frozen, only a hardware reset "
+                "(e.g. a power\ncycle) will unfreeze that line.\n\n"
+                "When multiple actions are requested, the order in which "
+                "they are\napplied may be significant. If disable "
+                "interrupts is requested,\nit is applied first, followed by "
+                "disable write protection, followed\nby any requested "
+                "change to <func>. The final three actions, if\nrequested, "
+                "are to enable write protection, enable interrupts, then\n"
+                "freeze physical or interrupts (or both) respectively.\n"
                );
 }
+
+#ifdef __cplusplus
+
+static inline volatile unsigned int *
+mmp_add(void * p, unsigned int v)
+{
+    return (volatile unsigned int *)((unsigned char *)p + v);
+}
+
+#else
 
 static inline volatile unsigned int *
 mmp_add(unsigned char * p, unsigned int v)
 {
     return (volatile unsigned int *)(p + v);
 }
+#endif
 
 /* Since we map a whole page (MAP_SIZE) then that page may already be
  * mapped which means we can skip a munmap() and mmap() call. Returns
@@ -325,276 +359,230 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp,
     return msp->mmap_ptr;
 }
 
-static int
-pio_set(int mem_fd, int bit_num, int pioc_num, const struct opts_t * op)
+static volatile unsigned int *
+do_mask_get_cfgr(int mem_fd, int bit_num, int pioc_num,
+                 const struct opts_t * op)
 {
-    int sr1_val, sr2_val, res;
-    unsigned int addr, val, bit_mask;
+    unsigned int bit_mask;
     volatile unsigned int * mmp;
     void * mmap_ptr = (void *)-1;
     struct mmap_state mstat;
 
     memset(&mstat, 0, sizeof(mstat));
     bit_mask = 1 << bit_num;
+    mmap_ptr = check_mmap(mem_fd, pio_mskr[pioc_num], &mstat, op);
+    if (NULL == mmap_ptr)
+        return NULL;
+    mmp = mmp_add(mmap_ptr, pio_mskr[pioc_num] & MAP_MASK);
+    if (bit_mask != *mmp)
+        *mmp = bit_mask;
+    mmap_ptr = check_mmap(mem_fd, pio_cfgr[pioc_num], &mstat, op);
+    if (NULL == mmap_ptr)
+        return NULL;
+    mmp = mmp_add(mmap_ptr, pio_cfgr[pioc_num] & MAP_MASK);
+    return mmp;
+}
 
-    if (op->peri_a || op->peri_b || op->peri_c || op->peri_d || op->do_pio) {
-        if (op->do_pio) {
-            mmap_ptr = check_mmap(mem_fd, pio_per[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
-                return 1;
-            mmp = mmp_add(mmap_ptr, pio_per[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
-        } else {
-            if (op->peri_a) {
-                sr1_val = 0;
-                sr2_val = 0;
-            } else if (op->peri_b) {
-                sr1_val = 1;
-                sr2_val = 0;
-            } else if (op->peri_c) {
-                sr1_val = 0;
-                sr2_val = 1;
-            } else {
-                sr1_val = 1;
-                sr2_val = 1;
-            }
-            res = 1;
-            // Would like to take a lock here
-            addr = pio_abcdsr1[pioc_num];
-            mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-            if (NULL == mmap_ptr)
-                goto err1_out;
-            mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-            val = *mmp;
-            if (!!(val & bit_mask) ^ sr1_val) {
-                if (sr1_val)
-                    val |= bit_mask;
-                else
-                    val &= ~bit_mask;
-                *mmp = val;
-            }
-            addr = pio_abcdsr2[pioc_num];
-            mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-            if (NULL == mmap_ptr)
-                goto err1_out;
-            mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-            val = *mmp;
-            if (!!(val & bit_mask) ^ sr2_val) {
-                if (sr2_val)
-                    val |= bit_mask;
-                else
-                    val &= ~bit_mask;
-                *mmp = val;
-            }
-            /* Now disable generic PIO action */
-            mmap_ptr = check_mmap(mem_fd, pio_pdr[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
-                goto err1_out;
-            mmp = mmp_add(mmap_ptr, pio_pdr[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
-            res = 0;
-err1_out:
-            // Would like to free that lock here
-            if (res)
-                return res;
+static int
+pio_set(int mem_fd, int bit_num, int pioc_num, const struct opts_t * op)
+{
+    unsigned int addr, bit_mask;
+    unsigned int cfgr = 0;
+    volatile unsigned int * ommp;
+    volatile unsigned int * cmmp = NULL;
+    void * mmap_ptr = (void *)-1;
+    struct mmap_state mstat;
+
+    memset(&mstat, 0, sizeof(mstat));
+    bit_mask = 1 << bit_num;
+
+    if (op->di_interrupt) {
+        mmap_ptr = check_mmap(mem_fd, pio_idr[pioc_num], &mstat, op);
+        if (NULL == mmap_ptr)
+            return 1;
+        ommp = mmp_add(mmap_ptr, pio_idr[pioc_num] & MAP_MASK);
+        *ommp = bit_mask;
+    }
+    if (op->wp_given && (0 == op->wpen)) {
+        mmap_ptr = check_mmap(mem_fd, PIO_WPMR, &mstat, op);
+        if (NULL == mmap_ptr)
+            return 1;
+        ommp = mmp_add(mmap_ptr, PIO_WPMR & MAP_MASK);
+        *ommp = (SAMA5D2_PIO_WPKEY << 8) | op->wpen;
+    }
+    if (op->do_func >= 0) {
+        cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op);
+        if (NULL == cmmp)
+            return 1;
+        cfgr = *cmmp;
+        if ((unsigned int)op->do_func != (CFGR_FUNC_MSK & cfgr))
+            *cmmp = ((~CFGR_FUNC_MSK & cfgr) | op->do_func);
+    }
+    if (op->dir_given) {
+        cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op);
+        if (NULL == cmmp)
+            return 1;
+        cfgr = *cmmp;
+        if (op->dir != !!(CFGR_DIR_MSK & cfgr)) {
+            if (op->dir)
+                *cmmp = (CFGR_DIR_MSK | cfgr);
+            else
+                *cmmp = (~CFGR_DIR_MSK & cfgr);
         }
     }
     if (op->di_schmitt || op->en_schmitt) {
-        res = !!op->di_schmitt;
-        addr = pio_schmitt[pioc_num];
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        val = *mmp;
-        if (!!(val & bit_mask) ^ res) {
-            if (res)
-                val |= bit_mask;
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
+                return 1;
+            cfgr = *cmmp;
+        }
+        if (!!(CFGR_SCHMITT_MSK & cfgr) != !!op->di_schmitt) {
+            if (op->di_schmitt)
+                *cmmp = (cfgr | CFGR_SCHMITT_MSK);
             else
-                val &= ~bit_mask;
-            *mmp = val;
+                *cmmp = (~CFGR_SCHMITT_MSK & cfgr);
         }
     }
     if (op->scdr_given) {
-        mmap_ptr = check_mmap(mem_fd, pio_scdr[pioc_num], &mstat, op);
+        mmap_ptr = check_mmap(mem_fd, S_PIO_SCDR, &mstat, op);
         if (NULL == mmap_ptr)
             return 1;
-        mmp = mmp_add(mmap_ptr, pio_scdr[pioc_num] & MAP_MASK);
-        *mmp = op->scdr_div;
+        ommp = mmp_add(mmap_ptr, S_PIO_SCDR & MAP_MASK);
+        *ommp = op->scdr_div;
     }
-    if (op->di_if_slow_clk || op->en_if_slow_clk) {
-        addr = (op->di_if_slow_clk ? pio_ifscdr[pioc_num] :
-                                     pio_ifscer[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->di_glitch || op->en_glitch) {
-        addr = (op->di_glitch ? pio_ifdr[pioc_num] : pio_ifer[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->di_interrupt) {
-        if (1 & op->di_interrupt) {
-            mmap_ptr = check_mmap(mem_fd, pio_idr[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
+    if (op->di_if_slow || op->en_if_slow) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_idr[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+            cfgr = *cmmp;
         }
-        if (op->di_interrupt > 1) {
-            mmap_ptr = check_mmap(mem_fd, pio_aimdr[pioc_num], &mstat,
-                                  op);
-            if (NULL == mmap_ptr)
-                return 1;
-            mmp = mmp_add(mmap_ptr, pio_aimdr[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+        if (!!(CFGR_IFSCEN_MSK & cfgr) != !!op->en_if_slow) {
+            if (op->en_if_slow)
+                *cmmp = (cfgr | CFGR_IFSCEN_MSK);
+            else
+                *cmmp = (~CFGR_IFSCEN_MSK & cfgr);
         }
     }
-    if (op->en_fall_low || op->en_ris_high) {
-        addr = (op->en_fall_low ? pio_fellsr[pioc_num] :
-                                  pio_rehlsr[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->en_edge || op->en_level) {
-        addr = (op->en_edge ? pio_esr[pioc_num] : pio_lsr[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->en_interrupt) {
-        if (1 & op->en_interrupt) {
-            mmap_ptr = check_mmap(mem_fd, pio_ier[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
+    if (op->di_if || op->en_if) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_ier[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+            cfgr = *cmmp;
         }
-        if (op->en_interrupt > 1) {
-            mmap_ptr = check_mmap(mem_fd, pio_aimer[pioc_num], &mstat,
-                                  op);
-            if (NULL == mmap_ptr)
-                return 1;
-            mmp = mmp_add(mmap_ptr, pio_aimer[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+        if (!!(CFGR_IFEN_MSK & cfgr) != !!op->en_if) {
+            if (op->en_if)
+                *cmmp = (cfgr | CFGR_IFEN_MSK);
+            else
+                *cmmp = (~CFGR_IFEN_MSK & cfgr);
         }
     }
-    if (op->di_multi || op->en_multi) {
-        addr = (op->di_multi ? pio_mddr[pioc_num] : pio_mder[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->di_output || op->en_output) {
-        addr = (op->di_output ? pio_odr[pioc_num] : pio_oer[pioc_num]);
-        mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-    }
-    if (op->di_pullup) {
-        if (1 & op->di_pullup) {
-            mmap_ptr = check_mmap(mem_fd, pio_pudr[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
+    if (op->evtsel_given) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_pudr[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+            cfgr = *cmmp;
         }
-        if (op->di_pullup > 1) {
-            mmap_ptr = check_mmap(mem_fd, pio_ppddr[pioc_num], &mstat,
-                                  op);
-            if (NULL == mmap_ptr)
+        if ((unsigned int)op->evtsel !=
+            ((CFGR_EVTSEL_MSK & cfgr) >> CFGR_EVTSEL_SHIFT))
+            *cmmp = ((~CFGR_EVTSEL_MSK & cfgr) |
+                    ((unsigned int)op->evtsel << CFGR_EVTSEL_SHIFT));
+    }
+    if (op->di_opd || op->en_opd) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_ppddr[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+            cfgr = *cmmp;
+        }
+        if (!!(CFGR_OPD_MSK & cfgr) != !!op->en_if) {
+            if (op->en_opd)
+                *cmmp = (cfgr | CFGR_OPD_MSK);
+            else
+                *cmmp = (~CFGR_OPD_MSK & cfgr);
         }
     }
-    if (op->en_pullup) {
-        if (1 & op->en_pullup) {
-            mmap_ptr = check_mmap(mem_fd, pio_puer[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
+
+    if ((op->di_pullup1dn2 > 0) || (op->en_pullup1dn2 > 0)) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_puer[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+            cfgr = *cmmp;
         }
-        if (op->en_pullup > 1) {
-            mmap_ptr = check_mmap(mem_fd, pio_ppder[pioc_num], &mstat,
-                                  op);
-            if (NULL == mmap_ptr)
-                return 1;
-            mmp = mmp_add(mmap_ptr, pio_ppder[pioc_num] & MAP_MASK);
-            *mmp = bit_mask;
+        /* Apply disables, if any, first */
+        if (op->di_pullup1dn2 > 0) {
+            if (1 & op->di_pullup1dn2)
+                *cmmp = (~CFGR_PUEN_MSK & cfgr);
+            else
+                *cmmp = (~CFGR_PDEN_MSK & cfgr);
+        }
+        if (op->en_pullup1dn2 > 0) {
+            if (1 & op->en_pullup1dn2)
+                *cmmp = (cfgr | CFGR_PUEN_MSK);
+            else
+                *cmmp = (cfgr | CFGR_PDEN_MSK);
         }
     }
     if (op->out_data >= 0) {
-        addr = ((op->out_data % 2) ? pio_sodr[pioc_num] :
-                                     pio_codr[pioc_num]);
+        addr = ((op->out_data > 0) ? pio_sodr[pioc_num] : pio_codr[pioc_num]);
         mmap_ptr = check_mmap(mem_fd, addr, &mstat, op);
         if (NULL == mmap_ptr)
             return 1;
-        mmp = mmp_add(mmap_ptr, addr & MAP_MASK);
-        *mmp = bit_mask;
-        if (op->out_data < 2) {
-            mmap_ptr = check_mmap(mem_fd, pio_osr[pioc_num], &mstat, op);
-            if (NULL == mmap_ptr)
+        ommp = mmp_add(mmap_ptr, addr & MAP_MASK);
+        *ommp = bit_mask;
+    }
+    if (op->drvstr_given) {
+        if (! cmmp) {
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
                 return 1;
-            mmp = mmp_add(mmap_ptr, pio_osr[pioc_num] & MAP_MASK);
-            if (0 == (*mmp & bit_mask)) {
-                mmap_ptr = check_mmap(mem_fd, pio_oer[pioc_num], &mstat, op);
-                if (NULL == mmap_ptr)
-                        return 1;
-                mmp = mmp_add(mmap_ptr, pio_oer[pioc_num] & MAP_MASK);
-                *mmp = bit_mask;
-            }
+            cfgr = *cmmp;
         }
+        if ((unsigned int)op->drvstr !=
+            ((CFGR_DRVSTR_MSK & cfgr) >> CFGR_DRVSTR_SHIFT))
+            *cmmp = ((~CFGR_DRVSTR_MSK & cfgr) |
+                     ((unsigned int)op->drvstr << CFGR_DRVSTR_SHIFT));
     }
-    if (op->wp_given) {
-        mmap_ptr = check_mmap(mem_fd, pio_wpmr[pioc_num], &mstat, op);
+    if (op->wr_dat_given) {
+        mmap_ptr = check_mmap(mem_fd, pio_mskr[pioc_num], &mstat, op);
         if (NULL == mmap_ptr)
             return 1;
-        mmp = mmp_add(mmap_ptr, pio_wpmr[pioc_num] & MAP_MASK);
-        *mmp = (SAMA5D3_PIO_WPKEY << 8) | op->wpen;
-    }
-    if (op->iod_given) {
-        unsigned int * reg_arr;
-        int bn;
-
-        if (bit_num < 16) {
-            reg_arr = pio_driver1;
-            bn = bit_num;
-        } else {
-            reg_arr = pio_driver2;
-            bn = bit_num & 0xf;
-        }
-        mmap_ptr = check_mmap(mem_fd, reg_arr[pioc_num], &mstat, op);
+        ommp = mmp_add(mmap_ptr, pio_mskr[pioc_num] & MAP_MASK);
+        *ommp = op->msk;
+        mmap_ptr = check_mmap(mem_fd, pio_odsr[pioc_num], &mstat, op);
         if (NULL == mmap_ptr)
             return 1;
-        mmp = mmp_add(mmap_ptr, reg_arr[pioc_num] & MAP_MASK);
-        val = *mmp;
-        if (op->verbose > 2)
-            fprintf(stderr, "pio_driver%d read (before) val=0x%x\n",
-                    (reg_arr == pio_driver2), val);
-        val &= ~(0x3 << (2 * bn));
-        if (op->iod > 0)
-            val |= (op->iod << (2 * bn));
-        *mmp = val;
-        if (op->verbose > 2)
-            fprintf(stderr, "pio_driver%d written (after) val=0x%x\n",
-                    (reg_arr == pio_driver2), val);
+        ommp = mmp_add(mmap_ptr, pio_odsr[pioc_num] & MAP_MASK);
+        *ommp = op->dat;
+    }
+    if (op->wp_given && op->wpen) {
+        mmap_ptr = check_mmap(mem_fd, PIO_WPMR, &mstat, op);
+        if (NULL == mmap_ptr)
+            return 1;
+        ommp = mmp_add(mmap_ptr, PIO_WPMR & MAP_MASK);
+        *ommp = (SAMA5D2_PIO_WPKEY << 8) | op->wpen;
+    }
+    if (op->en_interrupt) {
+        mmap_ptr = check_mmap(mem_fd, pio_ier[pioc_num], &mstat, op);
+        if (NULL == mmap_ptr)
+            return 1;
+        ommp = mmp_add(mmap_ptr, pio_ier[pioc_num] & MAP_MASK);
+        *ommp = bit_mask;
+    }
+    if (op->freeze_given) {
+        if (! cmmp) {
+            /* need pio_msk written to prior to write to pio_iofr */
+            if (! (cmmp = do_mask_get_cfgr(mem_fd, bit_num, pioc_num, op)))
+                return 1;
+            cfgr = *cmmp;
+        }
+        mmap_ptr = check_mmap(mem_fd, pio_iofr[pioc_num], &mstat, op);
+        if (NULL == mmap_ptr)
+            return 1;
+        ommp = mmp_add(mmap_ptr, pio_iofr[pioc_num] & MAP_MASK);
+        if (1 == op->freeze_phy0int1b2)
+            *ommp = (SAMA5D2_PIO_FRZKEY << 8) | IOFR_FINT_MSK;
+        else if (0 == op->freeze_phy0int1b2)
+            *ommp = (SAMA5D2_PIO_FRZKEY << 8) | IOFR_FPHY_MSK;
+        else
+            *ommp = (SAMA5D2_PIO_FRZKEY << 8) | IOFR_FPHY_MSK | IOFR_FINT_MSK;
     }
 
     if (mstat.mmap_ok) {
@@ -619,15 +607,19 @@ main(int argc, char ** argv)
     int origin0 = 0;
     int bit_num = -1;
     const char * cp;
+    const char * funcp = NULL;
     char ch;
     char bank = '\0';
     struct opts_t opts;
+    struct opts_t * op;
     struct stat sb;
 
-    memset(&opts, 0, sizeof(opts));
-    opts.out_data = -1;
+    op = &opts;
+    memset(op, 0, sizeof(opts));
+    op->out_data = -1;
+    op->do_func = -1;
     while ((c = getopt(argc, argv,
-                       "b:d:D:efFgGhiIlLmMoOp:Ps:S:tTuUvVw:zZ")) != -1) {
+                       "b:d:D:eE:f:F:gGhiImMp:r:s:S:tTuUvVw:X:zZ")) != -1) {
         switch (c) {
         case 'b':
             cp = optarg;
@@ -657,8 +649,8 @@ main(int argc, char ** argv)
                         "16383\n");
                 return 1;
             }
-            opts.scdr_div = k;
-            ++opts.scdr_given;
+            op->scdr_div = k;
+            op->scdr_given = true;
             break;
         case 'D':
             k = atoi(optarg);
@@ -667,65 +659,71 @@ main(int argc, char ** argv)
                         "3\n");
                 return 1;
             }
-            opts.iod = k;
-            ++opts.iod_given;
+            op->drvstr = k;
+            op->drvstr_given = true;
+            break;
+        case 'E':
+            k = atoi(optarg);
+            if ((k < 0) || (k > 4)) {
+                fprintf(stderr, "'-E' expects a bit number from 0 to 4\n");
+                return 1;
+            }
+            op->evtsel = k;
+            op->evtsel_given = true;
             break;
         case 'e':
-            ++opts.enumerate;
+            ++op->enumerate;
             break;
         case 'f':
-            ++opts.en_fall_low;
+            funcp = optarg;
             break;
         case 'F':
-            ++opts.en_ris_high;
-            break;
+            if (! isdigit(*optarg)) {
+                fprintf(stderr, "'-F' expects a value of 0, 1 or 2\n");
+                return 1;
+            }
+            k = atoi(optarg);
+            if ((k < 0) || (k > 2)) {
+                fprintf(stderr, "'-F' expects a value of 0, 1 or 2\n");
+                return 1;
+            }
+            op->freeze_phy0int1b2 = k;
+            op->freeze_given = true;
         case 'g':
-            ++opts.di_glitch;
+            ++op->di_if;
             break;
         case 'G':
-            ++opts.en_glitch;
+            ++op->en_if;
             break;
         case 'h':
             ++do_help;
             break;
         case 'i':
-            ++opts.di_interrupt;
+            ++op->di_interrupt;
             break;
         case 'I':
-            ++opts.en_interrupt;
-            break;
-        case 'l':
-            ++opts.en_edge;
-            break;
-        case 'L':
-            ++opts.en_level;
+            ++op->en_interrupt;
             break;
         case 'm':
-            ++opts.di_multi;
+            ++op->di_opd;
             break;
         case 'M':
-            ++opts.en_multi;
-            break;
-        case 'o':
-            ++opts.di_output;
-            break;
-        case 'O':
-            ++opts.en_output;
+            ++op->en_opd;
             break;
         case 'p':
             if (isalpha(*optarg)) {
                 ch = toupper(*optarg);
-                if ((ch >= 'A') && (ch <= 'E'))
+                if ((ch >= 'A') && (ch <= 'D'))
                     bank = ch;
                 else {
-                    fprintf(stderr, "'-p' expects a letter ('A' to 'E')\n");
+                    fprintf(stderr, "'-p' expects a letter ('A' to 'D')\n");
                     return 1;
                 }
             } else if (isdigit(*optarg)) {
                 k = atoi(optarg);
-                if ((k < 32) || (k > 191)) {
+                if ((k < 0) || (k > 159)) {
                     fprintf(stderr, "'-p' expects a letter or a number "
-                            "32 or greater\n");
+                            "from 0 to 159\n");
                     return 1;
                 }
                 knum = k;
@@ -735,30 +733,18 @@ main(int argc, char ** argv)
                 return 1;
             }
             break;
-        case 'P':
-            ++opts.do_pio;
-            break;
-        case 's':
-            switch (optarg[0]) {
-            case 'a': case 'A':
-                ++opts.peri_a;
-                break;
-            case 'b': case 'B':
-                ++opts.peri_b;
-                break;
-            case 'c': case 'C':
-                ++opts.peri_c;
-                break;
-            case 'd': case 'D':
-                ++opts.peri_d;
-                break;
-            case 'g': case 'G': case 'p': case 'P':
-                ++opts.do_pio;
-                break;
-            default:
-                fprintf(stderr, "'-s' expects 'P', 'A', 'B', 'C', or 'D'\n");
+        case 'r':
+            k = atoi(optarg);
+            if ((k < 0) || (k > 1)) {
+                fprintf(stderr, "'-r' expects 0 (pure input) or 1 (output "
+                        "enabled)\n");
                 return 1;
             }
+            op->dir_given = true;
+            op->dir = k;
+            break;
+        case 's':
+            funcp = optarg;
             break;
         case 'S':
             if (! isdigit(*optarg)) {
@@ -766,26 +752,26 @@ main(int argc, char ** argv)
                 return 1;
             }
             k = atoi(optarg);
-            if ((k < 0) || (k > 3)) {
-                fprintf(stderr, "'-S' expects a value of 0, 1, 2 or 3\n");
+            if ((k < 0) || (k > 1)) {
+                fprintf(stderr, "'-S' expects a value of 0 or 1\n");
                 return 1;
             }
-            opts.out_data = k;
+            op->out_data = k;
             break;
         case 't':
-            ++opts.di_schmitt;
+            ++op->di_schmitt;
             break;
         case 'T':
-            ++opts.en_schmitt;
+            ++op->en_schmitt;
             break;
         case 'u':
-            ++opts.di_pullup;
+            ++op->di_pullup1dn2;
             break;
         case 'U':
-            ++opts.en_pullup;
+            ++op->en_pullup1dn2;
             break;
         case 'v':
-            ++opts.verbose;
+            ++op->verbose;
             break;
         case 'V':
             printf("%s\n", version_str);
@@ -796,14 +782,22 @@ main(int argc, char ** argv)
                 fprintf(stderr, "'-w' expects 0 (disabled) or 1 (enabled)\n");
                 return 1;
             }
-            ++opts.wp_given;
-            opts.wpen = k;
+            op->wp_given = true;
+            op->wpen = k;
             break;
+        case 'X':
+            k = sscanf(optarg, "%8x,%8x", &op->msk, &op->dat);
+            if (2 != k) {
+                fprintf(stderr, "'-X' expects msk,dat where both msk and dat "
+                        "are 32 bit hexadecimal numbers\n");
+                return 1;
+            }
+            op->wr_dat_given = true;
         case 'z':
-            ++opts.di_if_slow_clk;
+            ++op->di_if_slow;
             break;
         case 'Z':
-            ++opts.en_if_slow_clk;
+            ++op->en_if_slow;
             break;
         default: /* '?' */
             do_help = 1;
@@ -824,18 +818,61 @@ main(int argc, char ** argv)
         usage(do_help);
         exit(help_exit);
     }
-
+    if (funcp) {
+        switch (funcp[0]) {
+        case 'a': case 'A':
+            op->do_func = PERI_A;
+            break;
+        case 'b': case 'B':
+            op->do_func = PERI_B;
+            break;
+        case 'c': case 'C':
+            op->do_func = PERI_C;
+            break;
+        case 'd': case 'D':
+            op->do_func = PERI_D;
+            break;
+        case 'e': case 'E':
+            op->do_func = PERI_E;
+            break;
+        case 'f': case 'F':
+            op->do_func = PERI_F;
+            break;
+        case 'g': case 'G':
+            op->do_func = PERI_G;
+            break;
+        case 'p': case 'P':
+            op->do_func = FUNC_GPIO;
+            break;
+        default:
+            if (isdigit(funcp[0])) {
+                k = atoi(funcp);
+                if ((k >= 0) && (k <= 7)) {
+                    op->do_func = k;
+                    break;
+                }
+            }
+            fprintf(stderr, "'-s' expects 'P', or 'A' to 'G'; or 0 to "
+                    "7\n");
+            return 1;
+        }
+    }
     if (stat(GPIO_BANK_ORIGIN, &sb) >= 0) {
-        if (opts.verbose > 1)
+        if (op->verbose > 1)
             fprintf(stderr, "%s found so kernel pin numbers start at 0 "
                     "(for PA0)\n", GPIO_BANK_ORIGIN);
         ++origin0;
-    } else if (opts.verbose > 2)
+    } else if (op->verbose > 2)
         fprintf(stderr, "%s not found so kernel pin numbers start at 32 "
                 "(for PA0)\n", GPIO_BANK_ORIGIN);
 
-    if (opts.enumerate) {
-        num = PIO_BANKS_SAMA5D3;
+    if (op->enumerate) {
+        if (op->enumerate) {
+            printf("To see all lines decoded by function, use "
+                   "'a5d2_pio_status -ee'\n");
+            return 0;
+        }
+        num = PIO_BANKS_SAMA5D2;
         for (k = 0; k < LINES_PER_BANK; ++k) {
             for (j = 0; j < num; ++j) {
                 n = ((j + (! origin0)) * 32) + k;
@@ -846,6 +883,19 @@ main(int argc, char ** argv)
         return 0;
     }
 
+    if (op->wr_dat_given) {
+        if ('\0' == bank) {
+            fprintf(stderr, "With '-X <msk,dat>' require '-p <bank>' since "
+                    "it will potentially\nwrite to all 32 lines in that "
+                    "bank\n");
+            return 1;
+        }
+        if (bit_num >= 0) {
+            fprintf(stderr, "With '-X <msk,dat>' require '-p bank' and "
+                    "'-b <bn>' must not\nbe given\n");
+            return 1;
+        }
+    }
     if (knum >= 0) {
         if (bit_num >= 0) {
             fprintf(stderr, "Give either '-p <knum>' or ('-b <bn>' and "
@@ -860,7 +910,7 @@ main(int argc, char ** argv)
         }
     } else if (bank) {
         if (bit_num < 0) {
-            if (opts.wp_given || opts.scdr_given) {
+            if (op->wp_given || op->scdr_given || op->wr_dat_given) {
                 bit_num = 0;
                 knum = ((! origin0) + bank - 'A') * 32;
             } else {
@@ -875,53 +925,35 @@ main(int argc, char ** argv)
                 "'-b <bn>'\n");
         goto help_exit;
     }
-    if ((!!opts.peri_a + !!opts.peri_b + !!opts.peri_c + !!opts.peri_d +
-         !!opts.do_pio) > 1) {
-        fprintf(stderr, "Can only have one of '-A', '-B', '-C', '-D', "
-                "'-P' and '-s=<P_A_B_C_D>'\n");
-        goto help_exit;
-    }
-    if ((!!opts.di_glitch + !!opts.en_glitch) > 1) {
+    if ((!!op->di_if + !!op->en_if) > 1) {
         fprintf(stderr, "Can only have one of '-g' and '-G'\n");
         goto help_exit;
     }
-    if (((1 == opts.di_interrupt) + (1 == opts.en_interrupt)) > 1) {
+    if (((1 == op->di_interrupt) + (1 == op->en_interrupt)) > 1) {
         fprintf(stderr, "Can only have one of '-i' and '-I'\n");
         goto help_exit;
     }
-    if (((opts.di_interrupt > 1) + (opts.en_interrupt > 1)) > 1) {
+    if (((op->di_interrupt > 1) + (op->en_interrupt > 1)) > 1) {
         fprintf(stderr, "Can only have one of '-ii' and '-II'\n");
         goto help_exit;
     }
-    if ((!!opts.di_multi + !!opts.en_multi) > 1) {
+    if ((!!op->di_opd + !!op->en_opd) > 1) {
         fprintf(stderr, "Can only have one of '-m' and '-M'\n");
         goto help_exit;
     }
-    if ((!!opts.di_output + !!opts.en_output) > 1) {
-        fprintf(stderr, "Can only have one of '-o' and '-O'\n");
-        goto help_exit;
-    }
-    if (((1 == opts.di_pullup) + (1 == opts.en_pullup)) > 1) {
+    if (((1 == op->di_pullup1dn2) + (1 == op->en_pullup1dn2)) > 1) {
         fprintf(stderr, "Can only have one of '-u' and '-U'\n");
         goto help_exit;
     }
-    if (((opts.di_pullup > 1) + (opts.en_pullup > 1)) > 1) {
+    if (((op->di_pullup1dn2 > 1) + (op->en_pullup1dn2 > 1)) > 1) {
         fprintf(stderr, "Can only have one of '-uu' and '-UU'\n");
         goto help_exit;
     }
-    if ((!!opts.en_fall_low + !!opts.en_ris_high) > 1) {
-        fprintf(stderr, "Can only have one of '-f' and '-F'\n");
-        goto help_exit;
-    }
-    if ((!!opts.en_edge + !!opts.en_level) > 1) {
-        fprintf(stderr, "Can only have one of '-l' and '-L'\n");
-        goto help_exit;
-    }
-    if ((!!opts.di_schmitt + !!opts.en_schmitt) > 1) {
+    if ((!!op->di_schmitt + !!op->en_schmitt) > 1) {
         fprintf(stderr, "Can only have one of '-t' and '-T'\n");
         goto help_exit;
     }
-    if ((!!opts.di_if_slow_clk + !!opts.en_if_slow_clk) > 1) {
+    if ((!!op->di_if_slow + !!op->en_if_slow) > 1) {
         fprintf(stderr, "Can only have one of '-z' and '-Z'\n");
         goto help_exit;
     }
@@ -929,18 +961,18 @@ main(int argc, char ** argv)
     pioc_num = bank ? (bank - 'A') : ((knum - (origin0 ? 0 : 32)) / 32);
     if (bit_num < 0)
         bit_num = knum % 32;
-    if (opts.verbose)
+    if (op->verbose)
         printf("P%c%d:\n", 'A' + pioc_num, bit_num);
-    if (opts.verbose > 1)
+    if (op->verbose > 1)
         printf("  bit_mask=0x%08x\n", 1 << bit_num);
 
     if ((mem_fd = open(DEV_MEM, O_RDWR | O_SYNC)) < 0) {
         perror("open of " DEV_MEM " failed");
         return 1;
-    } else if (opts.verbose > 2)
+    } else if (op->verbose > 2)
         printf("open(" DEV_MEM "O_RDWR | O_SYNC) okay\n");
 
-    res = pio_set(mem_fd, bit_num, pioc_num, &opts);
+    res = pio_set(mem_fd, bit_num, pioc_num, op);
 
     if (mem_fd >= 0)
         close(mem_fd);
