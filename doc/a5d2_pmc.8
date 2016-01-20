@@ -3,44 +3,64 @@
 a5d2_pmc \- Power Management Controller (PMC) utility
 .SH SYNOPSIS
 .B a5d2_tc_freq
-[\fI\-a ACRON\fR] [\fI\-c GCS\fR] [\fI\-d DIV\fR] [\fI\-D\fR] [\fI\-e\fR]
-[\fI\-E\fR] [\fI\-h\fR] [\fI\-p\fR] [\fI\-s\fR] [\fI\-v\fR] [\fI\-V\fR]
-[\fI\-w WPEN\fR]
+[\fI\-a ACRON\fR] [\fI\-c CSS\fR] [\fI\-d DIV\fR] [\fI\-D\fR] [\fI\-e\fR]
+[\fI\-E\fR]  [\fI\-g\fR] [\fI\-h\fR] [\fI\-p\fR] [\fI\-P PGC\fR] [\fI\-s\fR]
+[\fI\-v\fR] [\fI\-V\fR] [\fI\-w WPEN\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 .PP
 Atmel's SAMA5D2 family of SoCs contains a Power Management Controller (PMC)
 which achieves power reduction by allowing clocks that run other macrocells
-to be slowed down or stopped.
+to be slowed down or stopped. The PMC macrocell also controls the PCK0, PCK1
+and PCK2 programmable clocks which are available via GPIOs.
 .PP
-The clocks are divider into two groups: systems clocks and peripheral
-clocks.
+Various system devices and peripheral devices have clocks controlled by the
+PMC macrocell. Peripheral devices are identified using numeric "id"s (e.g.
+TC0 (Timer Counter block 0) is 35). Some peripheral devices get two clocks:
+a "peripheral clock" and a "generic clock". The peripheral clock is typically
+the master clock (e.g. 166 MHz) is is enabled by the EN bit in the Peripheral
+Control Register (PCM_PCR). The generic clock is enabled by the GCKEN bit is
+the same register and is a lot more flexible: its clock source chosen via
+the GCKCSS which can be divided by the value in the GCKDIV field.
 .PP
 The default action of this utility (i.e. when no options are given) is to
-list peripheral clocks that are enabled.
+list peripheral ids who have their peripheral/generic clocks enabled.
 .SH OPTIONS
 .TP
 \fB\-a\fR \fIACRON\fR
-\fIACRON\fR is an acronym for a system or peripheral/generic clock. To enumerate the
-available acronyms, use the \fI\-e\fR option. Alternatively a number may be
-given which is interpreted as an identifier; in which case the \fI\-p\fR or
-\fI\-s\fR oprion must be given to indicate whether the identifier is for a
-system or peripheral clock.
+\fIACRON\fR is an acronym for a system or peripheral/generic clock. To
+enumerate the available acronyms, use the \fI\-e\fR option. Alternatively a
+number may be given which is interpreted as an identifier; in which case the
+\fI\-p\fR or \fI\-s\fR oprion must be given to indicate whether the
+identifier is for a system or peripheral clock.
+.TP
+\fB\-c\fR \fICSS\fR
+\fICSS\fR sets the CSS field (Clock Source Selection) in the Programmable
+Clock Register (PCM_PCK[0\-2]) when \fI\-P PGC\fR is also given. Alternatively
+it sets the GCKCSS field in the Peripheral Control Register (PCM_PCR) when
+\fI\-a ACRON\fR and otionally \fI\-p\fR is given.
 .TP
 \fB\-d\fR \fIDIV\fR
-in most cases, the master clock (MCK) going to the peripheral macrocell
-identified by \fIACRON\fR can be divided by 2, 4 or 8. \fIDIV\fR may be 1,
-2, 4 or 8. The default is a value of 1 .
+where \fIDIV\fR is a value from 0 to 256. The value of 0 means "leave as is".
+When \fIDIV\fR is from 1 to 256 (inclusive) then one less than \fIDIV\fR is
+placed in the GCKDIV field in the Peripheral Control Register (PCM_PCR).
+Alternatively (\fIDIV\fR \- 1) is placed in the PRES field of the Programmable
+Clock Register (PCM_PCK[0\-2]) when \fI\-P PGC\fR is also given.
 .TP
 \fB\-D\fR
 disable (turn off) the clock going to the system or peripheral macrocell
 identified by \fIACRON\fR. If a Linux driver is using the associated
 macrocell then the kernel may freeze so use with care. All peripheral
 clocks are disabled at reset, however the boostrap and kernel will almost
-always turn some on. The kernel may only turn on a peripheral clock
-when the corresponding device is in use (e.g. serial ports (i.e. usarts
-or uarts) clocks only enabled while the corresponding serial port (e.g.
-/dev/ttyS2) is open).
+always turn some on. The kernel may only turn on a peripheral clock when
+the corresponding device is in use (e.g. serial ports (i.e. usarts or uarts)
+clocks are only enabled while the corresponding serial port (e.g. /dev/ttyS2)
+is open).
+.br
+For peripheral ids, if used once (i.e. '\-D') the peripheral clock is
+disabled (by clearing the EN bit in PCM_PCR); if used twice the generic clock
+is disabled (by clearing the GCKEN bit in PCM_PCR); and if used thrice both
+clocks are disabled.
 .TP
 \fB\-e\fR
 enumerate the available system and peripheral clocks. A separate table for
@@ -48,7 +68,16 @@ each is shown. Each table contains an ID, acronym and description column.
 .TP
 \fB\-E\fR
 enable (turn on) the clock going to the system or peripheral macrocell
-identified by \fIACRON\fR.
+identified by \fIACRON\fR. For peripheral ids, if used once (i.e. '\-E')
+the peripheral clock is enabled (with the EN bit in PCM_PCR); if used
+twice the generic clock is enabled (with the GCKEN bit in PCM_PCR); and
+if used thrice both clocks are enabled.
+.TP
+\fB\-g\fR
+using this option makes the \fI\-E\fR or \fI\-D\fR option apply to the
+peripheral device's generic clock. With this option if \fI\-E\fR or
+\fI\-D\fR are used twice then both the generic and peripheral clocks are
+enabled or disabled.
 .TP
 \fB\-h\fR
 print out usage message then exit.
@@ -57,6 +86,23 @@ print out usage message then exit.
 if \fIACRON\fR is not given then this option will list peripheral clocks
 that are enabled. If \fIACRON\fR is a number then this option indicates
 that it refers to a peripheral clock.
+.TP
+\fB\-P\fR \fIPGC\fR
+where \fIPGC\fR is the Programmable Clock number which should be 0, 1 or 2
+corresponding to the PCK0, PCK1 or PCK2 lines respectively. These
+programmable clocks are available via GPIOs (e.g. PCK1 is available
+from PC27 when it is set to peripheral function C). If neither \fI\-E\fR
+nor \fI\-D\fR is given with this option then the state of the programmable
+clock is output.
+.br
+If \fI\-E\fR is given together with this option then the corresponding
+programmable clock is enabled. Optionally \fI\-c CSS\fR and/or
+\fI\-d DIV\fR can be given to set those characteristics of the programmable
+clock being enabled; if they are not given then the previous settinfs are
+maintained.
+.br
+If \fI\-D\fR is given together with this option then the corresponding
+programmable clock is disabled.
 .TP
 \fB\-s\fR
 if \fIACRON\fR is not given then this option will list system clocks that
@@ -74,7 +120,7 @@ print the version string and then exit.
 if \fIWPEN\fR is 0 then this utility will attempt to disable the write
 protect feature on the TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is
 1 then this utility will attempt to enable the write protect feature on the
-TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is -1 then this utility
+TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is \-1 then this utility
 will attempt to show the current state of the write protect feature on this
 TCB. This utility will exit immediately after the actions associated with
 this option.
@@ -92,7 +138,7 @@ To view the available system and peripheral clocks:
 .br
              ID      Acronym         Description
 .br
-     -------------------------------------------------
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
 .br
              0       PCK             Processor clock
 .br
@@ -104,19 +150,19 @@ To view the available system and peripheral clocks:
 .br
              ID      Acronym         Description
 .br
-     -------------------------------------------------
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
 .br
-             2       DBGU            Debug unit
+             2       ARM             Performance monitor unit (PMU)
 .br
-             3       PIT             Periodic interval timer
+             5       GMAC            Ethernet MAC
 .br
-             4       WDT             watchdog timer
+             6       XDMAC0          DMA controller 0
 .br
              ...
 .PP
 To view the peripheral clocks that are currently enabled:
 .PP
-   a5d2_pmc 
+   a5d2_pmc
 .br
      Peripheral clocks enabled:
 .br
@@ -150,7 +196,7 @@ Written by Douglas Gilbert.
 .SH "REPORTING BUGS"
 Report bugs to <dgilbert at interlog dot com>.
 .SH COPYRIGHT
-Copyright \(co 2013 Douglas Gilbert
+Copyright \(co 2016 Douglas Gilbert
 .br
 This software is distributed under a FreeBSD license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

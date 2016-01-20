@@ -3,42 +3,49 @@
 a5d2_tc_freq \- generate frequencies with TC macrocell
 .SH SYNOPSIS
 .B a5d2_tc_freq
-\fI\-b PIO_TIO\fR [\fI\-d\fR] [\fI\-D\fR] [\fI\-e\fR] [\fI\-f FN\fR]
-[\fI\-h\fR] [\fI\-i\fR] [\fI\-I\fR] [\fI\-m M,S\fR] [\fI\-M\fR] [\fI\-n\fR]
-[\fI\-N\fR] [\fI\-p F1,D1[,F2,D2...]\fR] [\fI\-u\fR] [\fI\-v\fR] [\fI\-V\fR]
-[\fI\-w WPEN\fR]
+\fI\-b TIO\fR [\fI\-c TCCLKS\fR] [\fI\-d\fR] [\fI\-D\fR] [\fI\-e\fR]
+[\fI\-f FN\fR] [\fI\-h\fR] [\fI\-i\fR] [\fI\-I\fR] [\fI\-m M,S\fR]
+[\fI\-M\fR] [\fI\-n\fR] [\fI\-p F1,D1[,F2,D2...]\fR] [\fI\-R RF\fR]
+[\fI\-u\fR] [\fI\-v\fR] [\fI\-V\fR] [\fI\-w WPEN\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 .PP
 Atmel's SAMA5D2 family of SoCs contains two Timer Counter Block
-macrocells (TCB0 and TCB1) each containing three 32 bit Timer Counters (TC).
-TCB0 contains TC0, TC1 and TC2 while TCB1 contains TC3, TC4 and TC5. In the
+macrocells (TC0 and TC1) each containing three 32 bit Timer Counters (TC).
+TC0 contains TC0, TC1 and TC2 while TC1 contains TC3, TC4 and TC5. In the
 simplest case this utility configures the given TC to produce a frequency
 for a given duration.  A list of frequency, duration pairs can be given (as
 a command line option or in a file) that is played. By default a square
 wave is produced; its mark\-space ratio can be specified.
 .PP
 This utility could be used to play simple tunes on a small buzzer driven by
-a PIO line (i.e. a GPIO line). Even with HI_DRIVE the GPIO line may not
-have sufficient current to drive the buzzer, so a transistor may be
-needed (and a back EMF protection diode across the buzzer is recommended).
+a GPIO line. Even with HI drive strength (e.g. 32 mA at 3.3 volts) the GPIO
+line may not have sufficient current to drive the buzzer, so a transistor may
+be needed (and a back EMF protection diode across the buzzer is recommended).
 .SH OPTIONS
 .TP
-\fB\-b\fR \fIPIO_TIO\fR
-\fIPIO_TIO\fR should be either a PIO name (e.g. 'PC2') or TIO
-name (e.g. 'TIOB3'). Use \fI\-e\fR to enumerate the valid PIO names and
-their corresponding TIO names.
+\fB\-b\fR \fITIO\fR
+\fITIO\fR should be a TIO name (e.g. 'TIOB3'). The valid names are TIOA0 to
+TIOA5 and TIOB0 to TIOB5. These names are also listed when the \fI\-e\fR
+option is given.
+.TP
+\fB\-c\fR \fITCCLKS\fR
+\fITCCLKS\fR is the Timer Counter Clock Source. It can either be a number in
+the range 0 to 5 or an acronym. The acronyms, their descriptions and
+corresponding number are listed when the \fI\-e\fR option is given. The
+default value is 0 (TIMER_CLOCK1) which is the generic clock from the PMC
+macrocell.
 .TP
 \fB\-d\fR
 dummy mode: decode frequency,duration pairs, print them then exit. Ignore
-\fIPIO_TIO\fR if given.
+\fITIO\fR if given.
 .TP
 \fB\-D\fR
 after initial checks, run as daemon which exits after frequencies are
 are produced.
 .TP
 \fB\-e\fR
-enumerate TC associated PIO names with corresponding TIO names then exit.
+enumerate TC line names and clocks sources, then exit.
 .TP
 \fB\-f\fR \fIFN\fR
 read frequency,duration pairs from a file called \fIFN\fR. See the section
@@ -54,9 +61,8 @@ had prior to calling this utility. The Power Management Controller (PMC)
 is also set up for the TCB containing the TC associated with \fIPIO_TIO\fR.
 .TP
 \fB\-I\fR
-invert levels of mark and space. The default level for mark is
-high (typically 3.3 volts) while the default level for space is
-low (typically 0 volts).
+invert levels of mark and space. The default level for mark is high (typically
+3.3 volts) while the default level for space is low (typically 0 volts).
 .TP
 \fB\-m\fR \fIM,S\fR
 The generated frequency is a square wave by default. This option will change
@@ -79,19 +85,13 @@ This option bypasses the realtime scheduling step so this process competes
 with other normal processes on an equal footing. Best to use this option if
 the realtime scheduling causes some unwanted side effect.
 .TP
-\fB\-N\fR
-no PIO. The default action, at least when the \fI\-i\fR or \fI\-u\fR option
-is given, is to modify the PIO line (i.e. GPIO) associated with the TC output
-so the square wave is available externally. This may not be desirable as that
-PIO line may be needed for something else (e.g. TIOA3 is PC0 but that line
-is needed for the 10/100 ethernet interface (it's ETX0)). Rather than output
-the square wave to a PIO line, it could be used to generate an interrupt.
-This option suppresses any changes that would otherwise be made to the PIO
-line associated with \fIPIO_TIO\fR .
-.TP
 \fB\-p\fR \fIF1,D1[,F2,D2...]\fR
 the argument to this option is one or more frequency/duration pairs. See the
 FREQUENCY/DURATION PAIRS section below.
+.TP
+\fB\-R\fR \fIRF\fR
+overrides the calculation of the generic clock frequency provided by
+TIMER_CLOCK1 with the \fIRF\fR frequency.
 .TP
 \fB\-u\fR
 restore the GPIO line associated with \fIPIO_TIO\fR to generic PIO mode when
@@ -149,6 +149,14 @@ The argument to the \fI\-p\fR option (i.e. the frequency/duration pairs) may
 contain a space or tab as a separator but the argument would need to be
 quoted (e.g. surrounded by double quotes) to stop the shell interpreting
 them as unassociated command line arguments.
+.SH FREQUENCY AND DURATION MULTIPLIERS
+Frequencies and durations are decimal numbers unless prefixed by '0x' in
+which case they are decoded as hexadecimal numbers. For decimal numbers
+the multiplier suffixes k, ki, M, Mi, G and Gi can be given; they result
+in a multiplication of 1000, 1024, 1000000, 1048576, 1000000000 and
+1073741824 respectively. Trailing alphabetical characters are ignored
+so "1MHz" has the expected value; and "32kiHz" is 32768 Hz. The unit
+of duration is a millisecond so 1k for a duration is 1 second.
 .SH NOTES
 The SAMA5D2 Power Management Controller (PMC) reduces power by turning off
 the master clock going to various macrocells. At power up almost all
@@ -200,7 +208,7 @@ Written by Douglas Gilbert.
 .SH "REPORTING BUGS"
 Report bugs to <dgilbert at interlog dot com>.
 .SH COPYRIGHT
-Copyright \(co 2013 Douglas Gilbert
+Copyright \(co 2016 Douglas Gilbert
 .br
 This software is distributed under a FreeBSD license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

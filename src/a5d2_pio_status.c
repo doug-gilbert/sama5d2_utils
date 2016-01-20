@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <ctype.h>
 #include <string.h>
 #include <unistd.h>
@@ -54,7 +55,7 @@
 #include <libgen.h>
 
 
-static const char * version_str = "1.00 20160113";
+static const char * version_str = "1.00 20160119";
 
 
 #define PIO_BANKS_SAMA5D2 4  /* PIOA, PIOB, PIOC and PIOD */
@@ -553,14 +554,33 @@ const char * bank_str_arr[] = {
 };
 
 
+#ifdef __GNUC__
+static int pr2serr(const char * fmt, ...)
+        __attribute__ ((format (printf, 1, 2)));
+#else
+static int pr2serr(const char * fmt, ...);
+#endif
+
+
+static int
+pr2serr(const char * fmt, ...)
+{
+    va_list args;
+    int n;
+
+    va_start(args, fmt);
+    n = vfprintf(stderr, fmt, args);
+    va_end(args);
+    return n;
+}
+
 static void
 usage(int hval)
 {
     if (1 == hval) {
-        fprintf(stderr, "Usage: "
-                "a5d2_pio_status [-a] [-b <bn>] [-B] [-d] [-e] [-f <str>] "
-                "[-h] [-i]\n"
-                "                       [-p <port>] [-s] [-S] [-t] [-v] "
+        pr2serr("Usage: a5d2_pio_status [-a] [-b <bn>] [-B] [-d] [-e] "
+                "[-f <str>] [-h]\n"
+                "                       [-i] [-p <port>] [-s] [-S] [-t] [-v] "
                 "[-V] [-w]\n"
                 "  where:\n"
                 "    -a           list all lines within a bank (def: "
@@ -607,18 +627,17 @@ usage(int hval)
                 "    -v           increase verbosity (multiple times for "
                 "more)\n"
                 "    -V           print version string then exit\n");
-        fprintf(stderr,
-                "    -w           read write protect status register "
+        pr2serr("    -w           read write protect status register "
                 "which clears it\n");
-        fprintf(stderr,
-                "\nSAMA5D2x SoC PIO fetch status program. "
+        pr2serr("\nSAMA5D2x SoC PIO fetch status program. "
                 "Uses memory mapped\nIO to fetch PIO registers and shows "
                 "settings for given line(s). Try\n'-hh' for more help.\n");
     } else {
-        fprintf(stderr, ">> Abbreviation explanations\n"
+        pr2serr(">> Abbreviation explanations\n"
                 "driv:     line drive strength [def: 0 -> lo; 1 -> lo; "
-                "2 -> me; 3 -> hi]\n"
-                "          for 3.3 volts: 2, 2, 20, 32 mA respectively\n"
+                "2 -> me;\n"
+                "          3 -> hi]. For 3.3 volts: 2, 2, 20, 32 mA "
+                "respectively\n"
                 "evtsel:   event selction on input (def: 0 -> falling]\n"
                 "func:     function of pin (0 -> GPIO; 1 -> peri_a; etc)\n"
                 "ifen:     input filter enabled [def: 0 -> "
@@ -645,7 +664,7 @@ usage(int hval)
                 "wps**:    write protect status [def: 0 -> no violation "
                 "on PIO]\n"
                );
-        fprintf(stderr, "\nAbbreviations with a trailing '*' have "
+        pr2serr("\nAbbreviations with a trailing '*' have "
                 "the corresponding function\nenabled when the value "
                 "is 0 (i.e. negated logic). For example\n'schmitt*=1' "
                 "means the schmitt trigger is disabled. The trailing '**' "
@@ -685,28 +704,38 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
     if ((0 == msp->mmap_ok) || (msp->prev_mask_addrp != mask_addr)) {
         if (msp->mmap_ok) {
             if (-1 == munmap(msp->mmap_ptr, MAP_SIZE)) {
-                fprintf(stderr, "mmap_ptr=%p:\n", msp->mmap_ptr);
+                pr2serr("mmap_ptr=%p:\n", msp->mmap_ptr);
                 perror("    munmap");
                 return NULL;
             } else if (verbose > 2)
-                fprintf(stderr, "munmap() ok, mmap_ptr=%p\n", msp->mmap_ptr);
+                pr2serr("munmap() ok, mmap_ptr=%p\n", msp->mmap_ptr);
         }
         msp->mmap_ptr = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
                              mem_fd, mask_addr);
         if ((void *)-1 == msp->mmap_ptr) {
             msp->mmap_ok = 0;
-            fprintf(stderr, "addr=0x%x, mask_addr=0x%lx :\n", wanted_addr,
-                    mask_addr);
+            pr2serr("addr=0x%x, mask_addr=0x%lx :\n", wanted_addr, mask_addr);
             perror("    mmap");
             return NULL;
         }
         msp->mmap_ok = 1;
         msp->prev_mask_addrp = mask_addr;
         if (verbose > 2)
-            fprintf(stderr, "mmap() ok, mask_addr=0x%lx, mmap_ptr=%p\n",
-                    mask_addr, msp->mmap_ptr);
+            pr2serr("mmap() ok, mask_addr=0x%lx, mmap_ptr=%p\n", mask_addr,
+                    msp->mmap_ptr);
     }
     return msp->mmap_ptr;
+}
+
+static volatile unsigned int *
+get_mmp(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
+{
+    void * mmap_ptr;
+
+    mmap_ptr = check_mmap(mem_fd, wanted_addr, msp);
+    if (NULL == mmap_ptr)
+        return NULL;
+    return mmp_add(mmap_ptr, wanted_addr & MAP_MASK);
 }
 
 static char *
@@ -766,7 +795,6 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
     int ifen, ifscen, ods, pds, im, is, opd, puen, scd, pden, evtsel;
     int wpm, wps, schmitt, driv, func, pcfs, icfs;
     unsigned int cfgr, locks;
-    void * mmap_ptr = (void *)-1;
     struct mmap_state mstat;
     volatile unsigned int * mmp;
     const char * cp;
@@ -776,16 +804,12 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
 
     memset(&mstat, 0, sizeof(mstat));
 
-    mmap_ptr = check_mmap(mem_fd, pio_mskr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_mskr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_mskr[pioc_num] & MAP_MASK);
     if (*mmp != bit_mask)
         *mmp = bit_mask;
-    mmap_ptr = check_mmap(mem_fd, pio_cfgr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_cfgr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_cfgr[pioc_num] & MAP_MASK);
     cfgr = *mmp;
     func = (cfgr & CFGR_FUNC_MSK);
 
@@ -813,10 +837,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
             printf("  input filter %senabled\n",
                    (ifscen ? "slow clock " : ""));
     }
-    mmap_ptr = check_mmap(mem_fd, pio_odsr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_odsr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_odsr[pioc_num] & MAP_MASK);
     ods = !!(*mmp & bit_mask);
     if (0 == brief) {
         if (func || (0 == (CFGR_DIR_MSK & cfgr)))
@@ -824,27 +846,21 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
         else
             printf("  output data status: %d\n", ods);
     }
-    mmap_ptr = check_mmap(mem_fd, pio_pdsr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_pdsr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_pdsr[pioc_num] & MAP_MASK);
     pds = !!(*mmp & bit_mask);
     if (0 == brief)
         printf("  pin data status: %d\n", pds);
-    mmap_ptr = check_mmap(mem_fd, pio_imr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_imr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_imr[pioc_num] & MAP_MASK);
     im = !!(*mmp & bit_mask);
     if (0 == brief)
         printf("  interrupt mask: %d (%s)\n", im,
                (im ? "ENabled" : "DISabled"));
 
     if (interrupt) {
-        mmap_ptr = check_mmap(mem_fd, pio_isr[pioc_num], &mstat);
-        if (NULL == mmap_ptr)
+        if (NULL == ((mmp = get_mmp(mem_fd, pio_isr[pioc_num], &mstat))))
             return 1;
-        mmp = mmp_add(mmap_ptr, pio_isr[pioc_num] & MAP_MASK);
         is = !!(*mmp & bit_mask);
         if (0 == brief)
             printf("  interrupt status: %d (%s)\n", is,
@@ -866,10 +882,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
                (puen ? "ENabled" : "DISabled"));
 
     if (CFGR_IFSCEN_MSK & cfgr) {
-        mmap_ptr = check_mmap(mem_fd, S_PIO_SCDR, &mstat);
-        if (NULL == mmap_ptr)
+        if (NULL == ((mmp = get_mmp(mem_fd, S_PIO_SCDR, &mstat))))
             return 1;
-        mmp = mmp_add(mmap_ptr, S_PIO_SCDR & MAP_MASK);
         scd = *mmp & 0x3fff;
         if (0 == brief)
             printf("  (secure) slow clock divider debouncing register: %d "
@@ -888,28 +902,22 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
         else
             printf("  [input event: %s]\n", evtsel_arr[evtsel]);
     }
-    mmap_ptr = check_mmap(mem_fd, pio_locksr[pioc_num], &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, pio_locksr[pioc_num], &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, pio_locksr[pioc_num] & MAP_MASK);
     locks = !!(*mmp & bit_mask);
     if (0 == brief)
         printf("  locked status: %d (%slocked)\n", locks,
                (locks ? "" : "not "));
 
-    mmap_ptr = check_mmap(mem_fd, PIO_WPMR, &mstat);
-    if (NULL == mmap_ptr)
+    if (NULL == ((mmp = get_mmp(mem_fd, PIO_WPMR, &mstat))))
         return 1;
-    mmp = mmp_add(mmap_ptr, PIO_WPMR & MAP_MASK);
     wpm = *mmp;
     if (0 == brief)
         printf("  write protect mode: WPEN: %d (%s)\n",
                wpm & 1, ((wpm & 1) ? "ENabled" : "DISabled"));
     if (write_prot) {
-        mmap_ptr = check_mmap(mem_fd, PIO_WPSR, &mstat);
-        if (NULL == mmap_ptr)
+        if (NULL == ((mmp = get_mmp(mem_fd, PIO_WPSR, &mstat))))
             return 1;
-        mmp = mmp_add(mmap_ptr, PIO_WPSR & MAP_MASK);
         wps = *mmp & 0xffffff;
         if (0 == brief)
             printf("  write protect violation status: %d (%s), WPCSRC: "
@@ -936,11 +944,14 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
 
     if (1 == brief) {
         if (0 == func) {
-            printf("func=%d pds=%d ods=%d opd=%d ifen=%d im=%d "
-                   "is=%d puen=%d\nifscen=%d scd=%d pden=%d "
-                   "evtsel=%d locks=%d wpm=0x%x", func, pds, ods, opd,
-                   ifen, im, is, puen, ifscen, scd, pden, evtsel, locks,
-                   wpm);
+            if (translate)
+                printf("GPIO ");
+            else
+                printf("func=0 ");
+            printf("pds=%d ods=%d opd=%d ifen=%d im=%d is=%d puen=%d\n"
+                   "ifscen=%d scd=%d pden=%d evtsel=%d locks=%d wpm=0x%x",
+                   pds, ods, opd, ifen, im, is, puen, ifscen, scd, pden,
+                   evtsel, locks, wpm);
             if (write_prot)
                 printf(" wps=0x%x", wps);
             if (pcfs)
@@ -949,11 +960,20 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
                 printf(" icfs=1");
             printf("\nschmitt*=%d io_driv=%d\n", schmitt, driv);
         } else {
-            printf("func=%d pds=%d ods=%d opd=%d ifen=%d im=%d "
-                   "is=%d puen=%d\n"
-                   "ifscen=%d scd=%d pden=%d evtsel=%d\nlocks=%d "
-                   "wpm=0x%x", func, pds, ods, opd, ifen, im, is, puen,
-                   ifscen, scd, pden, evtsel, locks, wpm);
+            if (translate) {
+                snprintf(e, sizeof(e), "PERI_%c", 'A' + func - 1);
+                cp = e;
+                b[0] = '\0';
+                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir);
+                if (strlen(b) > 0)
+                    cp = b;
+                printf("%s pds=%d [ods=%d]", cp, pds, ods);
+            } else
+                printf("func=%d pds=%d [ods=%d]", func, pds, ods);
+            printf("opd=%d ifen=%d im=%d is=%d puen=%d\n"
+                   "ifscen=%d scd=%d pden=%d evtsel=%d\nlocks=%d wpm=0x%x",
+                   opd, ifen, im, is, puen, ifscen, scd, pden, evtsel, locks,
+                   wpm);
             if (write_prot)
                 printf(" wps=0x%x", wps);
             printf(" schmitt*=%d io_driv=%d\n", schmitt, driv);
@@ -989,12 +1009,12 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
     }
 
     if (mstat.mmap_ok) {
-        if (-1 == munmap(mmap_ptr, MAP_SIZE)) {
-            fprintf(stderr, "mmap_ptr=%p:\n", mmap_ptr);
+        if (-1 == munmap(mstat.mmap_ptr, MAP_SIZE)) {
+            pr2serr("mmap_ptr=%p:\n", mstat.mmap_ptr);
             perror("    munmap");
             return 1;
         } else if (verbose > 2)
-            fprintf(stderr, "trailing munmap() ok, mmap_ptr=%p\n", mmap_ptr);
+            pr2serr("trailing munmap() ok, mmap_ptr=%p\n", mstat.mmap_ptr);
     }
     return 0;
 }
@@ -1145,14 +1165,14 @@ main(int argc, char ** argv)
                 if ((ch >= 'A') && (ch <= 'D'))
                     bank = ch;
                 else {
-                    fprintf(stderr, "'-b' expects a letter ('A' to 'D')\n");
+                    pr2serr("'-b' expects a letter ('A' to 'D')\n");
                     exit(EXIT_FAILURE);
                 }
                 ++cp;
             }
             k = atoi(cp);
             if ((k < 0) || (k > 31)) {
-                fprintf(stderr, "'-b' expects a bit number from 0 to 31\n");
+                pr2serr("'-b' expects a bit number from 0 to 31\n");
                 exit(EXIT_FAILURE);
             }
             bit_num = k;
@@ -1183,20 +1203,18 @@ main(int argc, char ** argv)
                 if ((ch >= 'A') && (ch <= 'D'))
                     bank = ch;
                 else {
-                    fprintf(stderr, "'-p' expects a letter ('A' to 'D')\n");
+                    pr2serr("'-p' expects a letter ('A' to 'D')\n");
                     exit(EXIT_FAILURE);
                 }
             } else if (isdigit(*optarg)) {
                 k = atoi(optarg);
                 if ((k < 0) || (k > 159)) {
-                    fprintf(stderr, "'-p' expects a letter or a number "
-                            "0 to 159\n");
+                    pr2serr("'-p' expects a letter or a number 0 to 159\n");
                     exit(EXIT_FAILURE);
                 }
                 knum = k;
             } else {
-                fprintf(stderr, "'-p' expects a letter ('A' to 'D') or "
-                        "a number\n");
+                pr2serr("'-p' expects a letter ('A' to 'D') or a number\n");
                 exit(EXIT_FAILURE);
             }
             break;
@@ -1229,8 +1247,7 @@ main(int argc, char ** argv)
     if (optind < argc) {
         if (optind < argc) {
             for (; optind < argc; ++optind)
-                fprintf(stderr, "Unexpected extra argument: %s\n",
-                        argv[optind]);
+                pr2serr("Unexpected extra argument: %s\n", argv[optind]);
             do_help = 1;
             ret = 1;
         }
@@ -1249,8 +1266,7 @@ main(int argc, char ** argv)
             (toupper(str[1]) >= 'A') && (toupper(str[1]) <= 'D') &&
             isdigit(str[2])) {
             if ((1 != sscanf(str + 2, "%d", &k)) || (k < 0) || (k > 31)) {
-                fprintf(stderr, "expected to find PIO name like 'PC13' but "
-                        "didn't\n");
+                pr2serr("expected to find PIO name like 'PC13' but didn't\n");
                 return 1;
             }
             pnp = bank_pn_arr[toupper(str[1]) - 'A'];
@@ -1286,6 +1302,8 @@ main(int argc, char ** argv)
         mystr[k] = '\0';
 
         for (bpnpp = bank_pn_arr, k = 0; *bpnpp; ++bpnpp, ++k) {
+            if (bank && (k != bank - 'A'))
+                continue;
             for (pnp = *bpnpp; pnp->pin >= 0; ++pnp) {
                 if (strstr(pnp->name, mystr)) {
                     printf("P%c%d[%c]: %s\n", 'A' + k, pnp->pin,
@@ -1299,12 +1317,12 @@ main(int argc, char ** argv)
 
     if (stat(GPIO_BANK_ORIGIN, &sb) >= 0) {
         if (verbose > 1)
-            fprintf(stderr, "%s found so kernel pin numbers start at 0 "
-                    "(for PA0)\n", GPIO_BANK_ORIGIN);
+            pr2serr("%s found so kernel pin numbers start at 0 (for PA0)\n",
+                    GPIO_BANK_ORIGIN);
         ++origin0;
     } else if (verbose > 2)
-        fprintf(stderr, "%s not found so kernel pin numbers start at 32 "
-                "(for PA0)\n", GPIO_BANK_ORIGIN);
+        pr2serr("%s not found so kernel pin numbers start at 32 (for PA0)\n",
+                GPIO_BANK_ORIGIN);
 
     if (enumerate)
         return do_enumerate(enumerate, bank, origin0, do_dir);
@@ -1313,14 +1331,14 @@ main(int argc, char ** argv)
 
     if (knum >= 0) {
         if (bit_num >= 0) {
-            fprintf(stderr, "Give either '-p <knum>' or ('-b <bn>' and "
-                    "'-p <bank>') but not both\n");
+            pr2serr("Give either '-p <knum>' or ('-b <bn>' and '-p <bank>') "
+                    "but not both\n");
             exit(EXIT_FAILURE);
         }
         if ((! origin0) && (knum < 32)) {
-            fprintf(stderr, "since %s not found assume kernel pin numbers "
-                    "start at 32\n(for PA0) so %d is too low\n",
-                    GPIO_BANK_ORIGIN, knum);
+            pr2serr("since %s not found assume kernel pin numbers start at "
+                    "32\n(for PA0) so %d is too low\n", GPIO_BANK_ORIGIN,
+                    knum);
             exit(EXIT_FAILURE);
         }
     } else if (bank) {
@@ -1330,8 +1348,7 @@ main(int argc, char ** argv)
             if (write_prot)
                 knum = origin0 ? 0 : 32;
             else {
-                fprintf(stderr, "If '-p <bank>' given then also need "
-                        "'-b <bn>'\n");
+                pr2serr("If '-p <bank>' given then also need '-b <bn>'\n");
                 exit(EXIT_FAILURE);
             }
         } else
@@ -1341,7 +1358,7 @@ main(int argc, char ** argv)
             printf(">>> Assuming bank A, use '-p <port>' to change\n");
             knum = origin0 ? 0 : 32;
         } else {
-            fprintf(stderr, "Need to give gpio line with '-p <port>' and/or "
+            pr2serr("Need to give gpio line with '-p <port>' and/or "
                     "'-b <bn>'\n");
             usage(1);
             exit(EXIT_FAILURE);

@@ -64,7 +64,7 @@
 // #include <sys/ioctl.h>
 
 
-static const char * version_str = "1.00 20160115";
+static const char * version_str = "1.00 20160119";
 
 #define MAX_ELEMS 512
 #define DEV_MEM "/dev/mem"
@@ -104,9 +104,9 @@ static const char * version_str = "1.00 20160115";
 #define TC_CCR_CLKEN 1          /* Clock enable, if TC_CCR_CLKDIS not given */
 
 /* TIMER_CLOCK1 is the generic clock (per TCB block) from the PMC which is
- * often the "main" clock (24 MHz) or .....
+ * often the "master" clock (166 MHz). The main clock is often 12 MHz.
  */
-#define TIMER_CLOCK1 83000000 /* master clock is 166 MHz, div by 2 */
+#define TIMER_CLOCK1 166000000 /* master clock is 166 MHz */
 #define TIMER_CLOCK5 32768
 
 #define A5D2_TCB_WPKEY 0x54494D  /* "TIM" in ASCII */
@@ -118,7 +118,7 @@ static const char * version_str = "1.00 20160115";
 struct mmap_state {
     void * mmap_ptr;
     off_t prev_mask_addrp;
-    int mmap_ok;
+    bool mmap_ok;
 };
 
 /* when both members are zero then end of elem_arr */
@@ -136,7 +136,7 @@ struct table_io_t {
     unsigned int tc_rb;
     unsigned int tc_rc;
     unsigned int tc_imr;
-    unsigned int tc_emr;
+    unsigned int tc_emr;        /* extended mode register */
     unsigned int tc_wpmr;       /* one write protect mode reg per tcb */
     int is_tioa;
 };
@@ -194,20 +194,42 @@ static struct value_str_t tcclks_arr[] = {
     {-1, NULL},
 };
 
-static int tc_tclock1 = TIMER_CLOCK1;   /* may get divided by power of 2 */
+static int tc_tclock1 = TIMER_CLOCK1;   /* may get divided by up to 256 */
 static int cl_foreground = 1;
 
 static int verbose = 0;
 
 
-static void
-usage(void)
+#ifdef __GNUC__
+static int pr2serr(const char * fmt, ...)
+        __attribute__ ((format (printf, 1, 2)));
+#else
+static int pr2serr(const char * fmt, ...);
+#endif
+
+
+static int
+pr2serr(const char * fmt, ...)
 {
-    fprintf(stderr, "Usage: "
-            "a5d2_tc_freq -b TIO [-c TCCLKS] [-d] [-D] [-e] [-f FN] [-h]\n"
+    va_list args;
+    int n;
+
+    va_start(args, fmt);
+    n = vfprintf(stderr, fmt, args);
+    va_end(args);
+    return n;
+}
+
+static void
+usage(int do_help)
+{
+    if (do_help > 1)
+        goto second_help;
+    pr2serr("Usage: a5d2_tc_freq -b TIO [-c TCCLKS] [-d] [-D] [-e] [-f FN] "
+            "[-h]\n"
             "                    [-i] [-I] [-m M,S] [-M] [-n] "
             "[-p F1,D1[,F2,D2...]]\n"
-            "                    [-u] [-v] [-V] [-w WPEN]\n"
+            "                    [-R RF] [-u] [-v] [-V] [-w WPEN]\n"
             "  where:\n"
             "    -b TIO       TIO name ('TIOA0', 'TIOB0' to 'TIOA5' or "
             "'TIOB5')\n"
@@ -219,7 +241,7 @@ usage(void)
             "    -D           after initial checks, run as daemon which "
             "exits after\n"
             "                 frequency(s) is produced\n"
-            "    -e           enumerate TIO names\n"
+            "    -e           enumerate TIO names and TCCLKS clock sources\n"
             "    -f FN        obtain input from file FN. A FN of '-' "
             "taken as\n"
             "                 read stdin. If '-f' not given then '-p' "
@@ -231,8 +253,8 @@ usage(void)
             "generation\n"
             "    -I           invert levels of mark and space\n"
             "    -m M,S       mark (M) space (S) ratio (def: 1,1), both "
-            "M and S\n"
-            "                 should be greater than zero\n"
+            "should\n"
+            "                 be positive; ratio inverted for TIOB*\n"
             "    -M           show TC interrupt mask register then exit\n"
             "    -n           no realtime scheduling (def: set "
             "SCHED_FIFO)\n"
@@ -240,6 +262,8 @@ usage(void)
             "pairs; frequency\n"
             "                           in Hz and the duration in "
             "milliseconds\n"
+            "    -R RF        use RF as reference frequency for "
+            "TIMER_CLOCK1\n"
             "    -u           disable the TIO clock prior to exiting\n"
             "    -v           increase verbosity (multiple times for more)\n"
             "    -V           print version string then exit\n"
@@ -249,12 +273,16 @@ usage(void)
             "-1 -> show\n"
             "                 WP en/disable state. Then in all cases "
             "exit\n\n"
-            "Use the timer counter (TC) in the SAMA5D2 SoCs to "
-            "generate frequencies.\n"
-            "List of frequency (Hz when positive), duration (milliseconds "
+            "Use the timer counter (TC) in the SAMA5D2 SoCs to generate "
+            "frequencies.\nUse '-h' twice for more help.\n"
+           );
+    return;
+
+second_help:
+    pr2serr("List of frequency (Hz when positive), duration (milliseconds "
             "when positive)\npairs can be given on the command line ('-p') "
             "or in a file ('-f'). Use a\nfrequency of 0 for a delay (line "
-            "put at space level (usually low: 0\nvolts)). The first time "
+            "put at space level (usually low: 0\nvolts)).\nThe first time "
             "this utility is called option '-i' probably should\nbe given "
             "to initialize the TC. Duration of -1 for continuous (exit and\n"
             "maintain), assumes '-i'. A negative frequency is treated as "
@@ -263,7 +291,12 @@ usage(void)
             "period of 2.5 seconds. The maximum period is\n131071.999 "
             "seconds, corresponding to -131071999 . The maximum "
             "frequency\ndepends on the master clock (MCK) and is "
-            "typically 41.5 MHz.\n");
+            "typically 41.5 MHz.\n\nFrequencies and durations can have "
+            "multiplier suffixes: ki, Mi, Gi for\n2**10, 2**20 and 2**30 "
+            "respectively; or k, M, G for 10**3, 10**6 and\n10**9 "
+            "respectively. 30MHz is 30*(10**6) Hz while 32 kiH is 32768 "
+            "Hz.\n"
+           );
 }
 
 #ifdef __cplusplus
@@ -281,6 +314,7 @@ mmp_add(unsigned char * p, unsigned int v)
 {
     return (volatile unsigned int *)(p + v);
 }
+
 #endif
 
 void
@@ -294,6 +328,90 @@ cl_print(int priority, const char *fmt, ...)
     else
         vsyslog(priority, fmt, ap);
     va_end(ap);
+}
+
+/* The number in 'buf' together with an optional multiplier suffix is decoded
+ * or -1 is returned. Accepts a hex prefix (0x or 0X) or a decimal multiplier
+ * suffix of kHz for x1000 Hz, kiHz for x1024; same pattern for MHz and GHz.
+ * Ignore leading spaces and tabs; accept comma, space, tab and hash as
+ * terminator. */
+int
+fr_get_num(const char * buf)
+{
+    int res, num, n, len;
+    unsigned int unum;
+    char * cp;
+    const char * b;
+    char c = 'c';
+    char c2;
+    char lb[16];
+
+    if ((NULL == buf) || ('\0' == buf[0]))
+        return -1;
+    len = strlen(buf);
+    n = strspn(buf, " \t");
+    if (n > 0) {
+        if (n == len)
+            return -1;
+        buf += n;
+        len -=n;
+    }
+    /* following hack to keep C++ happy */
+    cp = strpbrk((char *)buf, " \t,#");
+    if (cp) {
+        len = cp - buf;
+        n = (int)sizeof(lb) - 1;
+        len = (len < n) ? len : n;
+        memcpy(lb, buf, len);
+        lb[len] = '\0';
+        b = lb;
+    } else
+        b = buf;
+    if (('0' == b[0]) && (('x' == b[1]) || ('X' == b[1]))) {
+        res = sscanf(b + 2, "%x", &unum);
+        num = unum;
+    } else if ('H' == toupper((int)b[len - 1])) {
+        res = sscanf(b, "%x", &unum);
+        num = unum;
+    } else
+        res = sscanf(b, "%d%c%c", &num, &c, &c2);
+    if (res < 1)
+        return -1LL;
+    else if (1 == res)
+        return num;
+    else {
+        if (res > 2)
+            c2 = toupper((int)c2);
+        switch (toupper((int)c)) {
+        case 'K':
+            if (2 == res)
+                return num * 1000;
+            if ('I' == c2)
+                return num * 1024;
+            else if ('H' == c2)
+                return num * 1000;
+            return -1;
+        case 'M':
+            if (2 == res)
+                return num * 1000000;
+            if ('I' == c2)
+                return num * 1048576;
+            else if ('H' == c2)
+                return num * 1000000;
+            return -1;
+        case 'G':
+            if (2 == res)
+                return num * 1000000000;
+            if ('I' == c2)
+                return num * 1073741824;
+            else if ('H' == c2)
+                return num * 1000000000;
+            return -1;
+        default:
+            pr2serr("unrecognized multiplier (expect k, M or G)\n");
+            return -1;
+        }
+    }
 }
 
 /* Daemonize the current process. */
@@ -359,30 +477,6 @@ cl_daemonize(const char * name, int no_chdir, int no_varrunpid, int verbose)
     }
 }
 
-
-/* Returns > 0 on success, 0 on error */
-unsigned int
-get_num(const char * buf, int len)
-{
-    char b[68];
-    int res;
-    unsigned int unum;
-
-    if (len > (int)(sizeof(b) - 4)) {
-        fprintf(stderr, "get_num: len=%d too large for a number\n",
-                len);
-        return 0;       /* no good return, 0 is least harmful */
-    }
-    memcpy(b, buf, len);
-    b[len] = '\0';
-    res = sscanf(b, "%u", &unum);
-    if (1 != res) {
-        fprintf(stderr, "get_num: could not decode number\n");
-        return 0;
-    }
-    return unum;
-}
-
 /* Read pairs of numbers from command line (comma (or (single) space)
  * separated list) or from stdin or file (one or two per line, comma
  * separated list or space separated list). Numbers assumed to be decimal.
@@ -391,14 +485,14 @@ get_num(const char * buf, int len)
 static int
 build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
 {
-    int in_len, k, j, m, fr, got_freq, neg;
+    int in_len, k, j, m, n, fr, got_freq, neg;
     unsigned int u;
     const char * lcp;
     const char * allowp;
 
     if ((NULL == arr) || (max_arr_len < 1))
         return 1;
-    allowp = "-0123456789 ,\t";
+    allowp = "-0123456789kKmMgGiIhHzZ ,\t";
     if (fp) {        /* read from file or stdin */
         char line[512];
         int off = 0;
@@ -425,8 +519,8 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 continue;
             k = strspn(lcp, allowp);
             if ((k < in_len) && ('#' != lcp[k])) {
-                fprintf(stderr, "%s: syntax error at line %d, pos %d\n",
-                        __func__, j + 1, m + k + 1);
+                pr2serr("%s: syntax error at line %d, pos %d\n", __func__,
+                        j + 1, m + k + 1);
                 return 1;
             }
             for (k = 0; k < 1024; ++k) {
@@ -439,23 +533,26 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                     neg = 1;
                     ++lcp;
                 }
-                u = get_num(lcp, strlen(lcp));
+                if ((n = fr_get_num(lcp)) == -1) {
+                    pr2serr("%s: unable to decode %s as number\n", __func__,
+                            lcp);
+                    return 1;
+                } else
+                    u = (unsigned int)n;
                 if ((off + k) >= max_arr_len) {
-                    fprintf(stderr, "%s: array length exceeded\n", __func__);
+                    pr2serr("%s: array length exceeded\n", __func__);
                     return 1;
                 }
                 if (neg) {
                     if ((u - 1) > INT_MAX) {
-                        fprintf(stderr, "%s: number too small: -%u\n",
-                                __func__, u);
+                        pr2serr("%s: number too small: -%u\n", __func__, u);
                         return 1;
                     }
                     m = -((int)(u - 1));
                     --m;
                 } else { /* non-negative */
                     if (u > INT_MAX) {
-                        fprintf(stderr, "%s: number too large: %u\n",
-                                __func__, u);
+                        pr2serr("%s: number too large: %u\n", __func__, u);
                         return 1;
                     }
                     m = (int)u;
@@ -480,8 +577,7 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
             off += (k + 1);
         }
         if (fr) {
-            fprintf(stderr, "%s: got frequency but missing duration\n",
-                     __func__);
+            pr2serr("%s: got frequency but missing duration\n", __func__);
             return 1;
         }
         if (off < max_arr_len) {
@@ -498,7 +594,7 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
         }
         k = strspn(inp, allowp);
         if (in_len != k) {
-            fprintf(stderr, "%s: error at pos %d\n", __func__, k + 1);
+            pr2serr("%s: error at pos %d\n", __func__, k + 1);
             return 1;
         }
         for (k = 0, fr = 0; k < max_arr_len; ++k) {
@@ -507,19 +603,21 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 ++lcp;
             } else
                 neg = 0;
-            u = get_num(lcp, strlen(lcp));
+            if ((n = fr_get_num(lcp)) == -1) {
+                pr2serr("%s: unable to decode %s as number\n", __func__, lcp);
+                return 1;
+            } else
+                u = (unsigned int)n;
             if (neg) {
                 if ((u - 1) > INT_MAX) {
-                    fprintf(stderr, "%s: number too small: -%u\n", __func__,
-                            u);
+                    pr2serr("%s: number too small: -%u\n", __func__, u);
                     return 1;
                 }
                 m = -((int)(u - 1));
                 --m;
             } else { /* non-negative */
                 if (u > INT_MAX) {
-                    fprintf(stderr, "%s: number too large: %u\n", __func__,
-                            u);
+                    pr2serr("%s: number too large: %u\n", __func__, u);
                     return 1;
                 }
                 m = (int)u;
@@ -542,12 +640,11 @@ build_arr(FILE * fp, const char * inp, struct elem_t * arr, int max_arr_len)
                 break;
         }
         if (fr) {
-            fprintf(stderr, "%s: got frequency but missing duration\n",
-                    __func__);
+            pr2serr("%s: got frequency but missing duration\n", __func__);
             return 1;
         }
         if (k == max_arr_len) {
-            fprintf(stderr, "%s: array length exceeded\n", __func__);
+            pr2serr("%s: array length exceeded\n", __func__);
             return 1;
         }
         if (k < (max_arr_len - 1)) {
@@ -565,33 +662,57 @@ static void *
 check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
 {
     off_t mask_addr;
+    bool did_unmap = false;
+    void * ommap_ptr = NULL;
 
     mask_addr = (wanted_addr & ~MAP_MASK);
-    if ((0 == msp->mmap_ok) || (msp->prev_mask_addrp != mask_addr)) {
+    if ((! msp->mmap_ok) || (msp->prev_mask_addrp != mask_addr)) {
         if (msp->mmap_ok) {
             if (-1 == munmap(msp->mmap_ptr, MAP_SIZE)) {
-                fprintf(stderr, "mmap_ptr=%p:\n", msp->mmap_ptr);
+                pr2serr("mmap_ptr=%p:\n", msp->mmap_ptr);
                 perror("    munmap");
                 return NULL;
-            } else if (verbose > 2)
-                fprintf(stderr, "munmap() ok, mmap_ptr=%p\n", msp->mmap_ptr);
+            } else if (verbose > 2) {
+                did_unmap = true;
+                ommap_ptr =  msp->mmap_ptr;
+            }
         }
         msp->mmap_ptr = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
                              mem_fd, mask_addr);
         if ((void *)-1 == msp->mmap_ptr) {
-            msp->mmap_ok = 0;
-            fprintf(stderr, "addr=0x%x, mask_addr=0x%lx :\n", wanted_addr,
-                    mask_addr);
+            msp->mmap_ok = false;
+            pr2serr("addr=0x%x, mask_addr=0x%lx :\n", wanted_addr, mask_addr);
             perror("    mmap");
             return NULL;
         }
-        msp->mmap_ok = 1;
+        msp->mmap_ok = true;
         msp->prev_mask_addrp = mask_addr;
-        if (verbose > 2)
-            fprintf(stderr, "mmap() ok, mask_addr=0x%lx, mmap_ptr=%p\n",
-                    mask_addr, msp->mmap_ptr);
+        if (verbose > 2) {
+            if (did_unmap) {
+                if (ommap_ptr == msp->mmap_ptr)
+                    pr2serr("munmap+mmap() mask_addr=0x%lx; old,new "
+                            "mmap_ptrs=%p,same\n", mask_addr, ommap_ptr);
+                else
+                    pr2serr("munmap+mmap() mask_addr=0x%lx; old,new "
+                            "mmap_ptrs=%p,%p\n", mask_addr, ommap_ptr,
+                            msp->mmap_ptr);
+            } else
+                pr2serr("mmap() mask_addr=0x%lx, mmap_ptr=%p\n",
+                        mask_addr, msp->mmap_ptr);
+        }
     }
     return msp->mmap_ptr;
+}
+
+static volatile unsigned int *
+get_mmp(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
+{
+    void * mmap_ptr;
+
+    mmap_ptr = check_mmap(mem_fd, wanted_addr, msp);
+    if (NULL == mmap_ptr)
+        return NULL;
+    return mmp_add(mmap_ptr, wanted_addr & MAP_MASK);
 }
 
 /* Looks for match of TIO name (e.g. TIOB3) in table_arr. If found returns
@@ -604,7 +725,7 @@ find_table_index(const char * cp)
     const struct table_io_t * tp;
 
     if ((! cp) || ((len = strlen(cp)) >= (int)sizeof(b))) {
-        fprintf(stderr, "%s: bad TIO, too long?\n", __func__);
+        pr2serr("%s: bad TIO, too long?\n", __func__);
         return -1;
     }
     for (k = 0; k < len; ++k)
@@ -616,7 +737,7 @@ find_table_index(const char * cp)
                 return k;
         }
     } else {
-        fprintf(stderr, "%s: expect a name that starts with 'T'\n", __func__);
+        pr2serr("%s: expect a name that starts with 'T'\n", __func__);
         return -1;
    }
    return -1;
@@ -637,9 +758,11 @@ main(int argc, char * argv[])
     int dummy = 0;
     int do_daemon = 0;
     int do_enum = 0;
+    int do_help = 0;
     int do_init = 0;
     int show_imr = 0;
     int no_sched = 0;
+    int ref_freq = 0;
     int do_uninit = 0;
     int mark = 1;
     int space = 1;
@@ -654,30 +777,32 @@ main(int argc, char * argv[])
     char b[16];
     struct elem_t * ep;
     struct table_io_t * tp;
-    void * mmap_ptr = (void *)-1;
     volatile unsigned int * mmp;
     struct timespec request;
     FILE * input_filep = NULL;
     struct sched_param spr;
     struct mmap_state mstat;
+    struct mmap_state * msp;
 
+    msp = &mstat;
+    memset(msp, 0, sizeof(mstat));
     mem_fd = -1;
-    while ((opt = getopt(argc, argv, "b:c:dDef:hiIm:Mnp:uvVw:")) != -1) {
+    while ((opt = getopt(argc, argv, "b:c:dDef:hiIm:Mnp:R:uvVw:")) != -1) {
         switch (opt) {
             break;
         case 'b':
             t_ind = find_table_index(optarg);
             if (t_ind < 0) {
-                fprintf(stderr, "Unable to match given TIO of %s with "
-                        "available names.\nTIOA0-5 and TIOB0-5 are the "
-                        "choices\n", optarg);
+                pr2serr("Unable to match given TIO of %s with available "
+                        "names.\nTIOA0-5 and TIOB0-5 are the choices\n",
+                        optarg);
                 return 1;
             }
             break;
         case 'c':
             k = atoi(optarg);
             if ((k < 0) || (k > 7)) {
-                fprintf(stderr, "'-c' option expects 0 to 7\n");
+                pr2serr("'-c' option expects 0 to 7\n");
                 return 1;
             }
             tcclks = k;
@@ -697,20 +822,19 @@ main(int argc, char * argv[])
             break;
         case 'h':
         case '?':
-            usage();
-            return 0;
+            ++do_help;
+            break;
         case 'i':
             ++do_init;
             break;
         case 'I':
             ++ms_invert;
             break;
-        case 'm':
+        case 'm':       /* mark,space ratio for TIOA*, inverted for TIOB* */
             cp = strchr(optarg, ',');
             if ((NULL == cp) || (optarg == cp) ||
                 ((cp - optarg) >= (int)sizeof(b))) {
-                fprintf(stderr, "-m expects two numbers separated by a "
-                        "comma\n");
+                pr2serr("-m expects two numbers separated by a comma\n");
                 return 1;
             }
             memcpy(b, optarg, cp - optarg);
@@ -718,8 +842,7 @@ main(int argc, char * argv[])
             mark = atoi(b);
             space = atoi(cp + 1);
             if ((mark < 1) || (space < 1)) {
-                fprintf(stderr, "-m expects both numbers to be greater "
-                        "than zero\n");
+                pr2serr("-m expects both numbers to be greater than zero\n");
                 return 1;
             }
             ++ms_given;
@@ -733,6 +856,14 @@ main(int argc, char * argv[])
         case 'p':
             pstring = optarg;
             break;
+        case 'R':
+            k = fr_get_num(optarg);
+            if (k <= 0) {
+                pr2serr("-R expects positive frequency for reference\n");
+                return 1;
+            }
+            ref_freq = k;
+            break;
         case 'u':
             ++do_uninit;
             break;
@@ -740,7 +871,7 @@ main(int argc, char * argv[])
             ++verbose;
             break;
         case 'V':
-            fprintf(stderr, "version: %s\n", version_str);
+            pr2serr("version: %s\n", version_str);
             return 0;
         case 'w':
             if (0 == strcmp("-1", optarg))
@@ -748,29 +879,31 @@ main(int argc, char * argv[])
             else {
                 wpen = atoi(optarg);
                 if ((wpen < 0) || (wpen > 1)) {
-                    fprintf(stderr, "expect argument to '-w' to be 0, 1 or "
-                            "-1\n");
+                    pr2serr("expect argument to '-w' to be 0, 1 or -1\n");
                     return 1;
                 }
             }
             ++wpen_given;
             break;
         default:
-            fprintf(stderr, "unrecognised option code 0x%x ??\n", opt);
-            usage();
+            pr2serr("unrecognised option code 0x%x ??\n", opt);
+            usage(1);
             return 1;
         }
     }
     if (optind < argc) {
         if (optind < argc) {
             for (; optind < argc; ++optind)
-                fprintf(stderr, "Unexpected extra argument: %s\n",
-                        argv[optind]);
-            usage();
+                pr2serr("Unexpected extra argument: %s\n", argv[optind]);
+            usage(1);
             return 1;
         }
     }
 
+    if (do_help) {
+        usage(do_help);
+        return 0;
+    }
     if (do_enum) {
         const struct value_str_t * vsp;
 
@@ -785,8 +918,7 @@ main(int argc, char * argv[])
     }
 
     if ((verbose > 3) && ms_given)
-        fprintf(stderr, "-m option decodes mark=%d and space=%d\n",
-                mark, space);
+        pr2serr("-m option decodes mark=%d and space=%d\n", mark, space);
 
     if (fname) {
         if ((1 == strlen(fname)) && ('-' == fname[0]))
@@ -794,7 +926,7 @@ main(int argc, char * argv[])
         else {
             input_filep = fopen(fname, "r");
             if (NULL == input_filep) {
-                fprintf(stderr, "failed to open %s:  ", fname);
+                pr2serr("failed to open %s:  ", fname);
                 perror("fopen()");
                 return 1;
             }
@@ -805,10 +937,9 @@ main(int argc, char * argv[])
         n = build_arr(input_filep, pstring, elem_arr, MAX_ELEMS - 1);
         if (n) {
             if (fname)
-                fprintf(stderr, "unable to decode contents of FN: %s\n",
-                        fname);
+                pr2serr("unable to decode contents of FN: %s\n", fname);
             else
-                fprintf(stderr, "unable to decode '-p F1,D1[,F2,D2...]'\n");
+                pr2serr("unable to decode '-p F1,D1[,F2,D2...]'\n");
             return 1;
         }
     }
@@ -843,18 +974,18 @@ main(int argc, char * argv[])
     }
 
     if (t_ind < 0) {
-        fprintf(stderr, "'-b TIO' option is required!\n");
+        pr2serr("'-b TIO' option is required!\n");
         if ((0 == do_init) && (0 == do_uninit) && (0 == wpen_given) &&
             (0 == show_imr)) {
-            fprintf(stderr, "\n");
-            usage();
+            pr2serr("\n");
+            usage(1);
         } else
-            fprintf(stderr, "Add '-h' for usage.\n");
+            pr2serr("Add '-h' for usage.\n");
         return 1;
     } else {
         tp = table_arr + t_ind;
         if (verbose > 2)
-            fprintf(stderr, "t_ind=%d, entry points to %s, TCB%d\n", t_ind,
+            pr2serr("t_ind=%d, entry points to %s, TCB%d\n", t_ind,
                     tp->tio_name, tp->tcb);
     }
     peri_id = (0 == tp->tcb) ? SAMA5D2_PERI_ID_TCB0 : SAMA5D2_PERI_ID_TCB1;
@@ -865,32 +996,21 @@ main(int argc, char * argv[])
     } else if (verbose)
         printf("open(" DEV_MEM ", O_RDWR | O_SYNC) okay\n");
 
-    memset(&mstat, 0, sizeof(mstat));
-
     if (wpen_given) {
+        if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_wpmr, msp))))
+            goto clean_up;
         if (-1 == wpen) {
-            mmap_ptr = check_mmap(mem_fd, tp->tc_wpmr, &mstat);
-            if (NULL == mmap_ptr)
-                goto clean_up;
-            mmp = mmp_add(mmap_ptr, tp->tc_wpmr & MAP_MASK);
             r = *mmp;
             printf("Write protect mode: %sabled\n", ((r & 1) ? "EN" : "DIS"));
-        } else if ((0 == wpen) || (1 == wpen)) {
-            mmap_ptr = check_mmap(mem_fd, tp->tc_wpmr, &mstat);
-            if (NULL == mmap_ptr)
-                return 1;
-            mmp = mmp_add(mmap_ptr, tp->tc_wpmr & MAP_MASK);
+        } else if ((0 == wpen) || (1 == wpen))
             *mmp = (A5D2_TCB_WPKEY << 8) | wpen;
-        }
         res = 0;
         goto clean_up;
     }
 
     if (show_imr) {
-        mmap_ptr = check_mmap(mem_fd, tp->tc_imr, &mstat);
-        if (NULL == mmap_ptr)
-            return 1;
-        mmp = mmp_add(mmap_ptr, tp->tc_imr & MAP_MASK);
+        if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_imr, msp))))
+            goto clean_up;
         r = *mmp;
         printf("TC interrupt mask register=0x%x\n", r);
         res = 0;
@@ -921,13 +1041,12 @@ main(int argc, char * argv[])
     }
     if (do_init || have_continuous) {
         if (verbose > 1)
-            fprintf(stderr, "initializing TC\n");
-        if (NULL == ((mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat))))
+            pr2serr("initializing TC\n");
+        if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ccr, msp))))
             goto clean_up;
-        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
         *mmp = TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
+            pr2serr("wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
                     tp->tc_ccr, TC_CCR_CLKDIS);
 
         if (peri_id < 32) {
@@ -939,25 +1058,22 @@ main(int argc, char * argv[])
             pmc_ed = PMC_PCER1;
             r = (1 << (peri_id - 32));
         }
-        if (NULL == ((mmap_ptr = check_mmap(mem_fd, pmc_s, &mstat))))
+        if (NULL == ((mmp = get_mmp(mem_fd, pmc_s, msp))))
             goto clean_up;
-        mmp = mmp_add(mmap_ptr, pmc_s & MAP_MASK);
         if (verbose > 2)
-            fprintf(stderr, "read: PMC_PCSR%d addr=0x%x, val=0x%x\n",
+            pr2serr("read: PMC_PCSR%d addr=0x%x, val=0x%x\n",
                     ((peri_id < 32) ? 0 : 1), pmc_s, *mmp);
         if (0 == (*mmp & r)) {
             if (verbose > 2)
-                fprintf(stderr, "    and initializing PMC\n");
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, pmc_ed, &mstat))))
+                pr2serr("    and initializing PMC\n");
+            if (NULL == ((mmp = get_mmp(mem_fd, pmc_ed, msp))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr, pmc_ed & MAP_MASK);
             *mmp = r;
             if (verbose > 1)
-                fprintf(stderr, "wrote: PMC_PCER%d addr=0x%x, val=0x%x\n",
+                pr2serr("wrote: PMC_PCER%d addr=0x%x, val=0x%x\n",
                         ((peri_id < 32) ? 0 : 1), pmc_ed, r);
-            if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCR, &mstat))))
+            if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, msp))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr,  PMC_PCR & MAP_MASK);
             /* write a read cmd for given bn (in the PID field) */
             *mmp = peri_id;
             /* now read back result, DIV field should be populated */
@@ -965,7 +1081,7 @@ main(int argc, char * argv[])
             pcr_gckdiv = (PMC_PCR_GCKDIV_MSK & r) >> PMC_PCR_GCKDIV_SHIFT;
             ++got_div;
             if (verbose)
-                fprintf(stderr, "read PMC_PCR got 0x%x\n", r);
+                pr2serr("read PMC_PCR got 0x%x, gckdiv=%d\n", r, pcr_gckdiv);
         }
     }
 
@@ -976,10 +1092,10 @@ main(int argc, char * argv[])
             if (ep->frequency < 0) {
                 /* period = abs(ep->frequency) / 1000.0 seconds */
                 if (ep->frequency <= -131072000) {
-                    fprintf(stderr, "frequency[%d]=%d represent a "
-                            "period of %u seconds which\nis too large "
-                            "(131071.999 seconds is the limit)\n", k + 1,
-                            ep->frequency, (-ep->frequency) / 1000);
+                    pr2serr("frequency[%d]=%d represent a period of %u "
+                            "seconds which\nis too large (131071.999 seconds "
+                            "is the limit)\n", k + 1, ep->frequency,
+                            (-ep->frequency) / 1000);
                     goto clean_up;
                 }
                 else if ((-ep->frequency) > (INT_MAX / TIMER_CLOCK5))
@@ -989,36 +1105,41 @@ main(int argc, char * argv[])
                 /* latter gives rc = 32768 for "freq" of -1000
                  * (i.e. a period of 1000 ms (1 second) */
                 want_clk = 5;
+                if (verbose > 1)
+                    pr2serr("slow clocking from TIMER_CLOCK5 assumed to be %d "
+                            "Hz\n", TIMER_CLOCK5);
             } else {    /* ep->frequency > 0 so it is an actual frequency */
                 if (! got_div) {
-                    if (NULL == ((mmap_ptr = check_mmap(mem_fd, PMC_PCR,
-                                                        &mstat))))
+                    if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, msp))))
                         goto clean_up;
-                    mmp = mmp_add(mmap_ptr, PMC_PCR & MAP_MASK);
                     /* write a read cmd for given bn (in the PID field) */
                     *mmp = peri_id;
                     /* now read back result, DIV field should be populated */
                     r = *mmp;
-                    pcr_gckdiv = ((r & 0x30000) >> 16);
                     pcr_gckdiv = (PMC_PCR_GCKDIV_MSK & r) >>
                                  PMC_PCR_GCKDIV_SHIFT;
                     ++got_div;
                     if (verbose)
-                        fprintf(stderr, "read PMC_PCR got 0x%x\n", r);
+                        pr2serr("read PMC_PCR: 0x%x, gckdiv=%d\n", r,
+                                pcr_gckdiv);
                 }
-                if (pcr_gckdiv)
+                if (ref_freq)
+                    tc_tclock1 = ref_freq;
+                else if (pcr_gckdiv > 0)
                     tc_tclock1 /= (pcr_gckdiv + 1);
 
                 /* since the SAMA5D2 has 32 bit counters just divide down the
-                 * highest speed clock (master_ clock/2: 66 MHz) */
+                 * highest speed clock (master_ clock/2: 83 MHz) */
                 rc = tc_tclock1 / ep->frequency;
                 if (rc < 2) {
-                    fprintf(stderr, "frequency[%d]=%d too high, limit: "
-                            "%d Hz (CLK1)\n", k + 1, ep->frequency,
-                            tc_tclock1 / 2);
+                    pr2serr("frequency[%d]=%d too high, limit: %d Hz "
+                            "(CLK1)\n", k + 1, ep->frequency, tc_tclock1 / 2);
                     goto clean_up;
                 }
-                want_clk = 1;       /* 1 Hz to 33 MHz */
+                want_clk = 1;       /* 1 Hz to 41.5 MHz */
+                if (verbose > 1)
+                    pr2serr("clocking from TIMER_CLOCK1 assumed to be %d "
+                            "Hz\n", tc_tclock1);
             }
             // Check Channel Mode Register (TC_CMR), change if needed
             switch (want_clk) {
@@ -1029,26 +1150,24 @@ main(int argc, char * argv[])
                 new_cmr = TC_CMR_VAL_CLK5;
                 break;
             default:
-                fprintf(stderr, "frequency[%d]=%d, bad want_clk=%d\n",
-                        k + 1, ep->frequency, want_clk);
+                pr2serr("frequency[%d]=%d, bad want_clk=%d\n", k + 1,
+                        ep->frequency, want_clk);
                 goto clean_up;
             }
             if (tcclks_given)
                 new_cmr = tcclks;       /* override want_clk, think about */
             new_cmr |= ((tp->is_tioa == ms_invert) ? TC_CMR_MS_INV_MASK :
                                                      TC_CMR_MS_MASK);
-            mmap_ptr = check_mmap(mem_fd, tp->tc_cmr, &mstat);
-            if (NULL == mmap_ptr)
+            if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_cmr, msp))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr, tp->tc_cmr & MAP_MASK);
             if (new_cmr != *mmp) {
                 *mmp = new_cmr;
                 if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_CMR addr=0x%x, val=0x%x\n",
-                            tp->tc_cmr, *mmp);
+                    pr2serr("wrote: TC_CMR addr=0x%x, val=0x%x\n", tp->tc_cmr,
+                            *mmp);
             } else if (verbose > 2)
-                fprintf(stderr," did not write TC_CMR addr=0x%x because "
-                        "val=0x%x already\n", tp->tc_cmr, *mmp);
+                pr2serr(" did not write TC_CMR addr=0x%x because val=0x%x "
+                        "already\n", tp->tc_cmr, *mmp);
             // Caclculate the mark space ratio in order to set RA and RB
             mps = mark + space;
             if (rc > USHRT_MAX) {
@@ -1077,7 +1196,7 @@ main(int argc, char * argv[])
                 }
             }
             if (0 == rms) {
-                fprintf(stderr, "mark+space too large, please reduce\n");
+                pr2serr("mark+space too large, please reduce\n");
                 goto clean_up;
             }
             // rms = rc / 2;           // use 1:1 mark space ratio
@@ -1085,83 +1204,67 @@ main(int argc, char * argv[])
             // rms = rc * 4 / 5;       // use 1:4 mark space ratio
             if (rc > prev_rms) {
                 // set up RC prior to RA and RB
-                mmap_ptr = check_mmap(mem_fd, tp->tc_rc, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_rc, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_rc & MAP_MASK);
                 *mmp = rc;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RC addr=0x%x, val=0x%x\n",
-                            tp->tc_rc, rc);
-
-                mmap_ptr = check_mmap(mem_fd, tp->tc_ra, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ra, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_ra & MAP_MASK);
                 *mmp = rms;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RA addr=0x%x, val=0x%x\n",
-                            tp->tc_ra, rms);
-                mmap_ptr = check_mmap(mem_fd, tp->tc_rb, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_rb, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_rb & MAP_MASK);
                 *mmp = rc - rms;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RB addr=0x%x, val=0x%x\n",
-                            tp->tc_rb, rc - rms);
+                if (verbose > 1) {
+                    pr2serr("TC_RC,A,B addr=0x%x,%x,%x val=%u,%u,%u",
+                            tp->tc_rc, tp->tc_ra, tp->tc_rb,
+                            rc, rms, rc - rms);
+                    if (verbose > 2)
+                        pr2serr("\n       [0x%x,0x%x,0x%x]\n", rc, rms,
+                                rc - rms);
+                    else
+                        pr2serr("\n");
+                }
             } else {
                 // set up RA and RB prior to RC
-                mmap_ptr = check_mmap(mem_fd, tp->tc_ra, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ra, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_ra & MAP_MASK);
                 *mmp = rms;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RA addr=0x%x, val=0x%x\n",
-                            tp->tc_ra, rms);
-                mmap_ptr = check_mmap(mem_fd, tp->tc_rb, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_rb, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_rb & MAP_MASK);
                 *mmp = rc - rms;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RB addr=0x%x, val=0x%x\n",
-                            tp->tc_rb, rc - rms);
-
-                mmap_ptr = check_mmap(mem_fd, tp->tc_rc, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_rc, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_rc & MAP_MASK);
                 *mmp = rc;
-                if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_RC addr=0x%x, val=0x%x\n",
-                            tp->tc_rc, rc);
+                if (verbose > 1) {
+                    pr2serr("TC_RA,B,C addr=0x%x,0x%x,0x%x val=%u,%u,%u",
+                            tp->tc_ra, tp->tc_rb, tp->tc_rc, rms, rc - rms,
+                            rc);
+                    if (verbose > 2)
+                        pr2serr("\n       [0x%x,0x%x,0x%x]\n", rms, rc - rms,
+                                rc);
+                    else
+                        pr2serr("\n");
+                }
             }
             prev_rms = (rms >= (rc - rms)) ? rms : (rc - rms);
             if (0 == tc_clk_ena) {
                 // everything should be set up, start it ...
-                mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
-                if (NULL == mmap_ptr)
+                if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ccr, msp))))
                     goto clean_up;
-                mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
                 *mmp = TC_CCR_SWTRG | TC_CCR_CLKEN;
                 if (verbose > 1)
-                    fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
-                            "[SWTRG | CLKEN]\n", tp->tc_ccr,
+                    pr2serr("wrote: TC_CCR addr=0x%x, val=0x%x [SWTRG | "
+                            "CLKEN]\n", tp->tc_ccr,
                             TC_CCR_SWTRG | TC_CCR_CLKEN);
                 tc_clk_ena = 1;
             }
         } else if (tc_clk_ena) {
             // drive line low
-            mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
-            if (NULL == mmap_ptr)
+            if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ccr, msp))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
             *mmp = TC_CCR_SWTRG | TC_CCR_CLKDIS;
             if (verbose > 1)
-                fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
-                        "[SWTRG | CLKDIS]\n", tp->tc_ccr,
+                pr2serr("wrote: TC_CCR addr=0x%x, val=0x%x [SWTRG | "
+                        "CLKDIS]\n", tp->tc_ccr,
                         TC_CCR_SWTRG | TC_CCR_CLKDIS);
             tc_clk_ena = 0;
         }
@@ -1176,46 +1279,40 @@ main(int argc, char * argv[])
                 goto clean_up;
             }
             if (verbose > 1)
-                fprintf(stderr, "slept for %d milliseconds\n",
-                        ep->duration_ms);
+                pr2serr("slept for %d milliseconds\n", ep->duration_ms);
         }
     }
 
     if ((tc_clk_ena) && (0 == have_continuous)) {
         // drive line low
-        mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
-        if (NULL == mmap_ptr)
+        if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ccr, msp))))
             goto clean_up;
-        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
         *mmp = TC_CCR_SWTRG | TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x "
-                    "[SWTRG | CLKDIS]\n", tp->tc_ccr,
-                    TC_CCR_SWTRG | TC_CCR_CLKDIS);
+            pr2serr("wrote: TC_CCR addr=0x%x, val=0x%x [SWTRG | CLKDIS]\n",
+                    tp->tc_ccr, TC_CCR_SWTRG | TC_CCR_CLKDIS);
         tc_clk_ena = 0;
     }
 
     if (do_uninit) {
         // disable clock within TC
-        mmap_ptr = check_mmap(mem_fd, tp->tc_ccr, &mstat);
-        if (NULL == mmap_ptr)
+        if (NULL == ((mmp = get_mmp(mem_fd, tp->tc_ccr, msp))))
             goto clean_up;
-        mmp = mmp_add(mmap_ptr, tp->tc_ccr & MAP_MASK);
         *mmp = TC_CCR_CLKDIS;
         if (verbose > 1)
-            fprintf(stderr, "wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
+            pr2serr("wrote: TC_CCR addr=0x%x, val=0x%x [CLKDIS]\n",
                     tp->tc_ccr, TC_CCR_CLKDIS);
     }
     res = 0;
 
 clean_up:
-    if (mstat.mmap_ok) {
-        if (-1 == munmap(mmap_ptr, MAP_SIZE)) {
-            fprintf(stderr, "mmap_ptr=%p:\n", mmap_ptr);
+    if (msp->mmap_ok) {
+        if (-1 == munmap(mstat.mmap_ptr, MAP_SIZE)) {
+            pr2serr("mmap_ptr=%p:\n", mstat.mmap_ptr);
             perror("    munmap");
             res = 1;
         } else if (verbose > 2)
-            fprintf(stderr, "trailing munmap() ok, mmap_ptr=%p\n", mmap_ptr);
+            pr2serr("trailing munmap() ok, mmap_ptr=%p\n", mstat.mmap_ptr);
     }
     if (mem_fd >= 0)
         close(mem_fd);
