@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 Douglas Gilbert.
+ * Copyright (c) 2010-2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,7 +30,7 @@
 /*****************************************************************
  * i2c_bbtest.c
  *
- * I2C "bit-banging" test program. Uses GPIO lines on SAMA5D3 family of
+ * I2C "bit-banging" test program. Uses GPIO lines on SAMA5D2 family of
  * SoCs (and others with a similar GPIO structure) to manipulate SCL
  * (clock: out direction) and SDA (data: bidirectional) to act as an
  * I2C protocol master. The SDA line should have a pull-up resistor on
@@ -111,8 +111,8 @@ static int verbose = 0;
 #define EEPROM_24LC_I2C_ADDR 0x50 /* if A0, A1 and A2 low or floating */
 
 
-/* SAMA5D3 family of SoCs has five PIOs (banks) each of 32 bits.
- * Notionally the first GPIO pin is PA0 and the last is PE31.
+/* SAMA5D2 family of SoCs has four PIOs (banks) each of 32 bits.
+ * Notionally the first GPIO pin is PA0 and the last is PD31.
  * Note some GPIO pins are used for other IO so the user should
  * check what is available. */
 
@@ -120,7 +120,6 @@ static int verbose = 0;
 #define GPIO_PORTB 'B'
 #define GPIO_PORTC 'C'
 #define GPIO_PORTD 'D'
-#define GPIO_PORTE 'E'
 
 /* No defaults */
 #define DEF_I2C_SCL_LINE -1
@@ -148,11 +147,11 @@ usage(void)
             "  where:\n"
             "    -c <c_bn>    SCL bit number within c_port. Also accepts\n"
             "                 prefix like 'pb' or just 'b' for <c_port>.\n"
-            "    -C <c_port>    SCL port ('A', 'B', 'C', 'D' or 'E') or\n"
+            "    -C <c_port>    SCL port ('A', 'B', 'C' or 'D') or\n"
             "                   gpio kernel pin number\n"
             "    -d <d_bn>    SDA bit number within d_port. Also accepts\n"
             "                 prefix like 'pb' or just 'b' for <d_port>.\n"
-            "    -D <d_port>    SDA port ('A', 'B', 'C', 'D' or  'E') or\n"
+            "    -D <d_port>    SDA port ('A', 'B', 'C' or 'D') or\n"
             "                   gpio kernel pin number\n"
             "    -F           force SCL line high (rather than rely on "
             "pull-up)\n"
@@ -193,7 +192,7 @@ usage(void)
 }
 
 
-/* Assume SAMA5D3 ARMv7 CPU running at 528 MHz */
+/* Assume SAMA5D2 ARMv7 CPU running at 496 MHz */
 #define DELAY_LOOP_COUNT 10
 
 #define EXPORT_FILE "/sys/class/gpio/export"
@@ -749,11 +748,8 @@ main(int argc, char ** argv)
                 case 'D': case 'd' :
                     scl_port = GPIO_PORTD;
                     break;
-                case 'E': case 'e' :
-                    scl_port = GPIO_PORTE;
-                    break;
                 default:
-                    fprintf(stderr, "'-C' expects a letter ('A' to 'E' or "
+                    fprintf(stderr, "'-C' expects a letter ('A' to 'D' or "
                             "'G')\n");
                     exit(EXIT_FAILURE);
                 }
@@ -766,7 +762,7 @@ main(int argc, char ** argv)
                 }
                 scl_kpin = k;
             } else {
-                fprintf(stderr, "'-C' expects a letter ('A' to 'E' or 'G') "
+                fprintf(stderr, "'-C' expects a letter ('A' to 'D' or 'G') "
                         "or a number\n");
                 exit(EXIT_FAILURE);
             }
@@ -777,10 +773,10 @@ main(int argc, char ** argv)
                 if ('P' == toupper(*cp))
                     ++cp;
                 ch = toupper(*cp);
-                if ((ch >= 'A') && (ch <= 'E'))
+                if ((ch >= 'A') && (ch <= 'D'))
                     sda_port = ch;
                 else {
-                    fprintf(stderr, "'-d' expects a letter ('A' to 'E')\n");
+                    fprintf(stderr, "'-d' expects a letter ('A' to 'D')\n");
                     exit(EXIT_FAILURE);
                 }
                 ++cp;
@@ -807,11 +803,8 @@ main(int argc, char ** argv)
                 case 'D': case 'd' :
                     sda_port = GPIO_PORTD;
                     break;
-                case 'E': case 'e' :
-                    sda_port = GPIO_PORTE;
-                    break;
                 default:
-                    fprintf(stderr, "'-D' expects a letter ('A' to 'E' or "
+                    fprintf(stderr, "'-D' expects a letter ('A' to 'D' or "
                             "'G')\n");
                     exit(EXIT_FAILURE);
                 }
@@ -824,7 +817,7 @@ main(int argc, char ** argv)
                 }
                 sda_kpin = k;
             } else {
-                fprintf(stderr, "'-D' expects a letter ('A' to 'E' or 'G') "
+                fprintf(stderr, "'-D' expects a letter ('A' to 'D' or 'G') "
                         "or a number\n");
                 exit(EXIT_FAILURE);
             }

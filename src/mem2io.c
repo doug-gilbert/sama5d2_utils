@@ -102,7 +102,7 @@
 // #include <sys/ioctl.h>
 
 
-static const char * version_str = "1.08 20160104";
+static const char * version_str = "1.09 20160121";
 
 #define MAJOR_TYP_READ 1
 #define MAJOR_TYP_WRITE 2
@@ -186,11 +186,22 @@ usage(void)
             "which are in decimal (unit: milliseconds).\n");
 }
 
+#ifdef __cplusplus
+
+static inline volatile unsigned int *
+mmp_add(void * p, unsigned int v)
+{
+    return (volatile unsigned int *)((unsigned char *)p + v);
+}
+
+#else
+
 static inline volatile unsigned int *
 mmp_add(unsigned char * p, unsigned int v)
 {
     return (volatile unsigned int *)(p + v);
 }
+#endif
 
 /* If decodes hex number okay then returns it and if errp is non-NULL places
  * 0 at *errp. If cannot decode hex number returns 0 and if errp is non-NULL

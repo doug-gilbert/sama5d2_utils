@@ -41,7 +41,7 @@
 
 
 #define _XOPEN_SOURCE 500
-#define _GNU_SOURCE
+#define _GNU_SOURCE 1
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -295,7 +295,8 @@ second_help:
             "multiplier suffixes: ki, Mi, Gi for\n2**10, 2**20 and 2**30 "
             "respectively; or k, M, G for 10**3, 10**6 and\n10**9 "
             "respectively. 30MHz is 30*(10**6) Hz while 32 kiH is 32768 "
-            "Hz.\n"
+            "Hz.\nAlternatively frequencies and durations can be given in "
+            "hex by using a\n'0x' prefix.\n"
            );
 }
 

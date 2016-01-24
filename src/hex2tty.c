@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2015 Douglas Gilbert.
+ * Copyright (c) 2010-2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,8 +37,8 @@
  * ASCII hex on stdout
  */
 
-#define _GNU_SOURCE
 #define _XOPEN_SOURCE 500
+#define _GNU_SOURCE 1
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +61,7 @@
 #include <linux/serial.h>       /* for RS485 */
 
 
-static const char * version_str = "1.09 20151209";
+static const char * version_str = "1.10 20160121";
 
 #define DEF_BAUD_RATE B38400
 #define DEF_BAUD_RATE_STR "38400"

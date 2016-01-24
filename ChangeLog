@@ -1,7 +1,7 @@
 Each utility has its own version number, date of last change and
 some description at the top of its ".c" file. See README file.
 
-Changelog for sama5d2_utils-0.90 [20160120] [svn: r4]
+Changelog for sama5d2_utils-0.90 [20160124] [svn: r5]
   - test basic functionality of a5d2_pio_status, a5d2_pio_set,
     a5d2_pcm and a5d2_tc_freq
 

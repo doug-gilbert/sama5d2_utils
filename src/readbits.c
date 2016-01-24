@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 Douglas Gilbert.
+ * Copyright (c) 2010-2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,9 +30,9 @@
 /*****************************************************************
  * readbits.c
  *
- * Utility for reading a GPIO line on a AT91SAM9G20/25/45 and SAMA5D3 in
+ * Utility for reading a GPIO line on a AT91SAM9G20/25/45 and SAMA5D3/D2 in
  * Linux. Uses sysfs interface. The target hardware is a FoxG20, the Aria
- * G25 and SAMA5D3 family. This utility mimics the actions of a utility of
+ * G25 and SAMA5D3/D2 family. This utility mimics the actions of a utility of
  * the same name for the FoxLX board. The Aria G25, FoxG20 and FoxLX
  * boards are made by Acme Systems. The SoCs are made by Atmel.
  *
@@ -53,7 +53,7 @@
 #include <errno.h>
 
 
-static const char * version_str = "1.07 20131124";
+static const char * version_str = "1.08 20160121";
 
 #define EXPORT_FILE "/sys/class/gpio/export"
 #define UNEXPORT_FILE "/sys/class/gpio/unexport"
@@ -97,7 +97,7 @@ usage(void)
             "    -U           leave line exported on exit\n"
             "    -v           increase verbosity (multiple times for more)\n"
             "    -V           print version string then exit\n\n"
-            "Read GPIO line state on AT91SAM9G20+G25/SAMA5D3 using sysfs. "
+            "Read GPIO line state on AT91SAM9G20+G25/SAMA5D3-D2 using sysfs. "
             "For the Aria G25\nand FoxG20 boards. This utility is similar "
             "to a FoxLX utility of the same\nname. Note: in earlier Linux "
             "kernels gpio kernel line numbers started at\n32 (for PA0), "

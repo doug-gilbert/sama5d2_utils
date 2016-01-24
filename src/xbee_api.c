@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015 Douglas Gilbert.
+ * Copyright (c) 2014-2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,7 +36,7 @@
  * ASCII hex on stdout
  */
 
-#define _GNU_SOURCE
+#define _GNU_SOURCE 1
 #define _XOPEN_SOURCE 500
 
 #include <stdio.h>
@@ -58,7 +58,7 @@
 #include <poll.h>
 
 
-static const char * version_str = "1.01 20150205";
+static const char * version_str = "1.02 20160121";
 
 #define DEF_BAUD_RATE B9600
 #define DEF_BAUD_RATE_STR "9600"

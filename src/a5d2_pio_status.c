@@ -55,7 +55,7 @@
 #include <libgen.h>
 
 
-static const char * version_str = "1.00 20160119";
+static const char * version_str = "1.01 20160123";
 
 
 #define PIO_BANKS_SAMA5D2 4  /* PIOA, PIOB, PIOC and PIOD */
@@ -578,17 +578,17 @@ static void
 usage(int hval)
 {
     if (1 == hval) {
-        pr2serr("Usage: a5d2_pio_status [-a] [-b <bn>] [-B] [-d] [-e] "
-                "[-f <str>] [-h]\n"
-                "                       [-i] [-p <port>] [-s] [-S] [-t] [-v] "
+        pr2serr("Usage: a5d2_pio_status [-a] [-b BN] [-B] [-d] [-e] "
+                "[-f STR] [-h]\n"
+                "                       [-i] [-p PORT] [-s] [-S] [-t] [-v] "
                 "[-V] [-w]\n"
                 "  where:\n"
                 "    -a           list all lines within a bank (def: "
                 "'-p A')\n"
-                "    -b <bn>      bit (line) number within port (0 to 31). "
+                "    -b BN        bit (line) number within port (0 to 31). "
                 "Also\n"
                 "                 accepts prefix like 'pb' or just 'b' for "
-                "<port>.\n"
+                "PORT.\n"
                 "                 Example: '-b PC7' equivalent to '-p c "
                 "-b 7'\n"
                 "    -B           brief ouput (e.g. 'func=1 puen=1 ...'). "
@@ -600,16 +600,16 @@ usage(int hval)
                 "kernel pin.\n"
                 "                 Use twice to list peripheral names for "
                 "each pin\n"
-                "    -f <str>     find peripheral names containing <str> "
+                "    -f STR       find peripheral names containing STR "
                 "(list\n"
-                "                 then exit). If <str> is a line name (e.g. "
+                "                 then exit). If STR is a line name (e.g. "
                 "PC3)\n"
                 "                 then list peripherals for that line\n"
                 "    -h           print usage message, use twice for "
                 "abbreviations\n"
                 "    -i           read interrupt status register which "
                 "then clears it\n"
-                "    -p <port>    port bank ('A' to 'D') or gpio kernel "
+                "    -p PORT      port bank ('A' to 'D') or gpio kernel "
                 "line number\n"
                 "                 0 -> PA0, 1 -> PA1 ... 127 -> PD31\n"
                 "    -s           summarize all lines in a bank, equivalent "
@@ -618,9 +618,8 @@ usage(int hval)
                 "-s -p C'\n"
                 "    -S           show all selected line names within all "
                 "banks.\n"
-                "                 Use twice for appended '^' indicating "
-                "pull-up\n"
-                "                 Use thrice to indicate open drain\n"
+                "                 Use twice to append direction "
+                "annotations\n"
                 "    -t           translate peripheral type to functional "
                 "name\n"
                 "                 (e.g. PD15 peri_b -> FLEXCOM4_IO3)\n"
@@ -638,24 +637,24 @@ usage(int hval)
                 "2 -> me;\n"
                 "          3 -> hi]. For 3.3 volts: 2, 2, 20, 32 mA "
                 "respectively\n"
-                "evtsel:   event selction on input (def: 0 -> falling]\n"
+                "evtsel:   event selection on input (def: 0 -> falling]\n"
                 "func:     function of pin (0 -> GPIO; 1 -> peri_a; etc)\n"
-                "ifen:     input filter enabled [def: 0 -> "
-                "disabled]\n"
                 "icfs:     interrupt configuation freeze status [def: 0 -> "
                 "none]\n"
+                "ifen:     input filter enabled [def: 0 -> "
+                "disabled]\n"
                 "im:       interrupt mask [def: 0 -> disabled]\n"
                 "is:       interrupt status [def: 0 -> no change]\n"
                 "locks:    lock status [def: 0 -> unlocked]\n"
-                "opd:      open drain status [def: 0 -> disabled: "
-                "driven high+low]\n"
                 "ods:      output data status [def: 0 -> level 0 to "
                 "be driven]\n"
+                "opd:      open drain status [def: 0 -> disabled: "
+                "driven high+low]\n"
                 "pcfs:     physical configuation freeze status [def: 0 -> "
                 "none]\n"
+                "pden:     pull-down status [def: 0 -> disabled]\n"
                 "pds:      pin data status [0 -> line is at level 0; "
                 "1 -> level 1]\n"
-                "pden:     pull-down status [def: 0 -> disabled]\n"
                 "puen:     pull-up status [def: 0 -> disabled]\n"
                 "scd**:    slow clock divider (debouncing) [def: 0; per "
                 "PIO]\n"
@@ -817,9 +816,9 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
     ifscen = !!(CFGR_IFSCEN_MSK & cfgr);
     if (0 == brief) {
         if (0 == func)
-            printf("  PIO function: GPIO ACTIVE [0]\n");
+            printf("  function: GPIO ACTIVE [0]\n");
         else {
-            printf("  PIO function: peripheral %c ", 'A' + func - 1);
+            printf("  peripheral function: %c ", 'A' + func - 1);
             if (translate) {
                 translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir);
                 if (0 == strlen(b))
@@ -829,7 +828,7 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
             } else
                 printf("[%d]\n", func);
         }
-        printf("  PIO direction: %s\n", (CFGR_DIR_MSK & cfgr) ?
+        printf("  direction: %s\n", (CFGR_DIR_MSK & cfgr) ?
                          "line enabled as output" : "line pure input");
         if (0 == ifen)
             printf("  input filter disabled\n");
@@ -1048,11 +1047,11 @@ do_enumerate(int enum_val, int bank, int orig0, int do_dir)
             printf("SAMA5D2: PIO %c:\n", 'A' + k);
             for (j = 0; j < LINES_PER_BANK; ++j) {
                 cp = translate_peri(b, sizeof(b), k, j, 1, do_dir);
-                printf("  P%c%d: %s, ", 'A' + k, j,
+                printf("  P%c%d: %s", 'A' + k, j,
                        (strlen(cp) > 0) ? cp : "-");
                 for (m = 2; m < 7; ++m) {
                     cp = translate_peri(b, sizeof(b), k, j, m, do_dir);
-                    printf("%s, ", (strlen(cp) > 0) ? cp : "-");
+                    printf(", %s", (strlen(cp) > 0) ? cp : "-");
                 }
                 printf("\n");
             }

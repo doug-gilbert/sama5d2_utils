@@ -16,7 +16,7 @@
 #include <string.h>
 
 
-static const char * version_str = "0.97 20151212";
+static const char * version_str = "0.98 20160121";
 
 #define SYSFS_W1_DEVS "/sys/bus/w1/devices"
 #define DS18S20_DS1820_FAM 0x10
@@ -110,6 +110,7 @@ get_temp(const char * dev, const char * pathp, struct opts_t * op)
 {
     int fd, milliTemp, mt, t;
     ssize_t numRead;
+    const char * ccp;
     char * cp;
     char buf[256];     // Data from device
     char tmpData[5];   // Temp C * 1000 reported by device
@@ -118,8 +119,8 @@ get_temp(const char * dev, const char * pathp, struct opts_t * op)
     if (op->verbose)
         pr2serr("found W1 temperature device: %s\n", dev);
     if (op->serial_num) {
-        if ((cp = strchr(dev, '-'))) {
-            if (1 == sscanf(cp + 1, "%14s", buf)) {
+        if ((ccp = strchr(dev, '-'))) {
+            if (1 == sscanf(ccp + 1, "%14s", buf)) {
                 if (op->out_fp)
                     ;
                 else if (op->ofile) {

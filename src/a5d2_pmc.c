@@ -44,7 +44,7 @@
 
 
 #define _XOPEN_SOURCE 500
-#define _GNU_SOURCE
+#define _GNU_SOURCE 1
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,7 +67,7 @@
 // #include <sys/ioctl.h>
 
 
-static const char * version_str = "1.00 20160120";
+static const char * version_str = "1.01 20160121";
 
 #define MAX_ELEMS 256
 #define DEV_MEM "/dev/mem"
@@ -121,6 +121,25 @@ struct bit_acron_desc {
     int div_apart_from_1;
     const char * acron;
     const char * desc;
+};
+
+struct opts_t {
+    int css;
+    int divisor;
+    int do_disable;
+    int enumerate;
+    int do_enable;
+    int pgc;
+    int verbose;
+    int wpen;
+    bool css_given;
+    bool divisor_given;
+    bool do_generic;
+    bool pgc_given;
+    bool sel_peri_clks;
+    bool sel_sys_clks;
+    bool wpen_given;
+    const char * acronp;
 };
 
 /* Array of clock sources. CSS (0 to 3) in PMC_MCKR and GCKCSS in PCM_PCR.
@@ -216,8 +235,6 @@ static struct bit_acron_desc peri_id_arr[] = {
     {-1, -1, NULL, NULL},
 };
 
-static int verbose = 0;
-
 
 #ifdef __GNUC__
 static int pr2serr(const char * fmt, ...)
@@ -310,7 +327,8 @@ mmp_add(unsigned char * p, unsigned int v)
  * mapped which means we can skip a munmap() and mmap() call. Returns
  * new or re-used pointer to mmapped page, or returns NULL if problem. */
 static void *
-check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
+check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp,
+           const struct opts_t * op)
 {
     off_t mask_addr;
 
@@ -321,7 +339,7 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
                 pr2serr("mmap_ptr=%p:\n", msp->mmap_ptr);
                 perror("    munmap");
                 return NULL;
-            } else if (verbose > 2)
+            } else if (op->verbose > 2)
                 pr2serr("munmap() ok, mmap_ptr=%p\n", msp->mmap_ptr);
         }
         msp->mmap_ptr = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -334,7 +352,7 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
         }
         msp->mmap_ok = 1;
         msp->prev_mask_addrp = mask_addr;
-        if (verbose > 2)
+        if (op->verbose > 2)
             pr2serr("mmap() ok, mask_addr=0x%lx, mmap_ptr=%p\n", mask_addr,
                     msp->mmap_ptr);
     }
@@ -342,18 +360,19 @@ check_mmap(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
 }
 
 static volatile unsigned int *
-get_mmp(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
+get_mmp(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp,
+        const struct opts_t * op)
 {
     void * mmap_ptr;
 
-    mmap_ptr = check_mmap(mem_fd, wanted_addr, msp);
+    mmap_ptr = check_mmap(mem_fd, wanted_addr, msp, op);
     if (NULL == mmap_ptr)
         return NULL;
     return mmp_add(mmap_ptr, wanted_addr & MAP_MASK);
 }
 
 static void
-do_enumerate(int enumerate)
+do_enumerate(const struct opts_t * op)
 {
     int n;
     struct bit_acron_desc * badp;
@@ -366,7 +385,7 @@ do_enumerate(int enumerate)
         printf("\t%d\t%s%s\t%s\n", badp->bit_num, badp->acron,
                ((n > 7) ? "" : "\t"), badp->desc);
     }
-    if (verbose || (enumerate > 1))
+    if (op->verbose || (op->enumerate > 1))
         printf("Acronym can be used in '-a ACRON' option\n");
     printf("\nPeripheral ids:\n");
     printf("\tID\tAcronym\t\tDescription\n");
@@ -376,7 +395,7 @@ do_enumerate(int enumerate)
         printf("\t%d\t%s%s\t%s\n", badp->bit_num, badp->acron,
                ((n > 7) ? "" : "\t"), badp->desc);
     }
-    if (verbose || (enumerate > 1))
+    if (op->verbose || (op->enumerate > 1))
         printf("Acronym can be used in '-a ACRON' option\n");
     printf("\nClock sources:\n");
     printf("\tID\tAcronym\t\tDescription\n");
@@ -386,43 +405,328 @@ do_enumerate(int enumerate)
         printf("\t%d\t%s%s\t%s\n", badp->bit_num, badp->acron,
                ((n > 7) ? "" : "\t"), badp->desc);
     }
-    if (verbose || (enumerate > 1))
+    if (op->verbose || (op->enumerate > 1))
         printf("Acronym can be used in '-c CSS' option\n");
+}
+
+static int
+en_dis_peri_sys_clk(int mem_fd, struct mmap_state * msp, int bn,
+                    const struct opts_t * op)
+{
+    int res = 1;
+    unsigned int ui, reg, mask;
+    volatile unsigned int * mmp;
+
+    if (op->sel_peri_clks) {
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, msp, op))))
+            goto clean_up;
+        reg = PMC_PCR_WR_CMD_MSK | (op->css << PMC_PCR_GCKCSS_SHIFT) | bn;
+        if (op->divisor_given && (op->divisor > 0))
+            reg |= ((op->divisor - 1) << PMC_PCR_GCKDIV_SHIFT);
+        if (1 & op->do_enable)
+            reg |= PMC_PCR_EN_MSK;
+        if (2 & op->do_enable)
+            reg |= PMC_PCR_GCKEN_MSK;
+        if (op->verbose > 1)
+            printf("Writing 0x%x to %p [IO addr: 0x%x]\n", reg, mmp,
+                   PMC_PCR);
+        *mmp = reg;
+    }
+    if (op->do_enable) {
+        if (op->sel_sys_clks)
+            ui = PMC_SCER;
+        else
+            ui = (bn > 31) ? PMC_PCER1 : PMC_PCER0;
+    } else {
+        if (op->sel_sys_clks)
+            ui = PMC_SCDR;
+        else
+            ui = (bn > 31) ? PMC_PCDR1 : PMC_PCDR0;
+    }
+    mask = (bn > 31) ? (1 << (bn - 32)) : (1 << bn);
+    if (NULL == ((mmp = get_mmp(mem_fd, ui, msp, op))))
+        goto clean_up;
+    if (op->verbose > 1)
+        printf("Writing 0x%x to %p [IO addr: 0x%x]\n", mask, mmp, ui);
+    *mmp = mask;
+    res = 0;
+
+clean_up:
+    return res;
+}
+
+static int
+do_pgc(int mem_fd, struct mmap_state * msp, const struct opts_t * op)
+{
+    int k, n;
+    int res = 1;
+    unsigned int ui, reg, hreg, pckx;
+    struct bit_acron_desc * badp;
+    volatile unsigned int * mmp;
+    const char * cp;
+
+    if (op->verbose) {
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, msp, op))))
+            goto clean_up;
+        pr2serr("PMC_SCSR=0x%x\n", *mmp);
+    }
+    switch (op->pgc) {
+    case 0:
+        ui = PMC_SC_PCK0_MSK;
+        pckx = PMC_PCK0;
+        break;
+    case 1:
+        ui = PMC_SC_PCK1_MSK;
+        pckx = PMC_PCK1;
+        break;
+    case 2:
+        ui = PMC_SC_PCK2_MSK;
+        pckx = PMC_PCK2;
+        break;
+    default:
+        pr2serr("bad pgc=%d\n", op->pgc);
+        goto clean_up;
+        break;
+    }
+    if (! (op->do_enable || op->do_disable)) {
+        if (op->verbose)
+            pr2serr("Use '-E' or '-D' to enable or disable, now "
+                    "providing information about PCK%d\n", op->pgc);
+        if (NULL == ((mmp = get_mmp(mem_fd, pckx, msp, op))))
+            goto clean_up;
+        reg = *mmp;
+        n = ((PMC_PCKX_PRES_MSK & reg) >> PMC_PCKX_PRES_SHIFT);
+        k = (PMC_PCKX_CSS_MSK & reg);
+        for (badp = clock_src_arr; badp->bit_num >= 0; ++badp) {
+            if (k == badp->bit_num)
+                break;
+        }
+        cp = (badp->bit_num >= 0) ? badp->acron : "?";
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, msp, op))))
+            goto clean_up;
+        printf("PCK%d: %sabled, CSS: %s [%d], PRES=%d [divisor=%d]\n",
+               op->pgc, (ui & *mmp) ? "EN" : "DIS", cp, k, n, n + 1);
+    } else if (op->do_disable) {/* disabling PCK0, PCK1 or PCK2 */
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCDR, msp, op))))
+            goto clean_up;
+        *mmp = ui;
+        if (op->verbose)
+            pr2serr("wrote: 0x%x to SCDR [0x%x] to disable PCK%d\n", ui,
+                    pckx, op->pgc);
+    } else {                /* enabling PCK0, PCK1 or PCK2 */
+        if (NULL == ((mmp = get_mmp(mem_fd, pckx, msp, op))))
+            goto clean_up;
+        reg = *mmp;
+        hreg = reg;
+        if (op->css_given) {
+            reg &= ~PMC_PCKX_CSS_MSK;
+            reg |= op->css;
+        }
+        if (op->divisor_given && (op->divisor > 0)) {
+            reg &= ~PMC_PCKX_PRES_MSK;
+            reg |= ((op->divisor - 1) & 0xff) << PMC_PCKX_PRES_SHIFT;
+        }
+        if (reg != hreg) {
+            *mmp = reg;
+            if (op->verbose)
+                pr2serr("wrote: 0x%x to PMC_PCK%d [0x%x]\n", reg, op->pgc,
+                        pckx);
+        } else if (op->verbose > 1)
+            pr2serr("did not write to PMC_PCK%d [0x%x], 0x%x unchanged\n",
+                    op->pgc, pckx, reg);
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCER, msp, op))))
+            goto clean_up;
+        *mmp = ui;
+        if (op->verbose)
+            pr2serr("wrote: 0x%x to SCER [0x%x] to enable PCK%d\n", reg,
+                    PMC_SCER, op->pgc);
+    }
+    res = 0;
+
+clean_up:
+    return res;
+}
+
+static int
+show_sys_clks(int mem_fd, struct mmap_state * msp, int bn,
+              const struct opts_t * op)
+{
+    int k;
+    int res = 1;
+    unsigned int reg, mask;
+    struct bit_acron_desc * badp;
+    volatile unsigned int * mmp;
+
+    if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, msp, op))))
+        goto clean_up;
+    reg = *mmp;
+    if (op->verbose)
+        pr2serr("PMC_SCSR=0x%x\n", reg);
+    badp = sys_id_arr;
+
+    if (op->acronp) {
+        if (reg & (1 << bn))
+            printf("%s system clock ENabled\n", op->acronp);
+        else
+            printf("%s system clock DISabled\n", op->acronp);
+    } else {
+        printf("System clocks enabled:\n");
+        for (k = 0, mask = 1; k < 32; ++k, mask <<= 1) {
+            if (reg & mask) {
+                for ( ; badp->bit_num >= 0; ++badp) {
+                    if (k == badp->bit_num) {
+                        printf("    %s:\t%s\n", badp->acron, badp->desc);
+                        break;
+                    } else if (k < badp->bit_num) {
+                        printf("    PMC_SCSR bit_num=%d set\n", k);
+                        break;
+                    }
+                }
+                if (badp->bit_num < 0)
+                    printf("    PMC_SCSR bit_num=%d set\n", k);
+            }
+        }
+    }
+    res = 0;
+
+clean_up:
+    return res;
+}
+
+static int
+show_peri_clks(int mem_fd, struct mmap_state * msp, int bn,
+               const struct opts_t * op)
+{
+    int k;
+    int res = 1;
+    unsigned int reg, mask;
+    struct bit_acron_desc * badp;
+    volatile unsigned int * mmp;
+
+    if (op->acronp) {
+        if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, msp, op))))
+            goto clean_up;
+        /* write a read cmd for given bn (in the PID field) */
+        *mmp = bn;
+        /* now read back result, DIV field should be populated */
+        reg = *mmp;
+        if (op->verbose > 1)
+            pr2serr("PMC_PCR=0x%x\n", reg);
+        printf("%s: PCR_EN=%d, PCR_GCKEN=%d", op->acronp,
+               !!(PMC_PCR_EN_MSK & reg),
+               !!(PMC_PCR_GCKEN_MSK & reg));
+        if (PMC_PCR_GCKEN_MSK & reg)
+            printf(", GCKCSS=%d, GCKDIV=%d\n",
+                   ((PMC_PCR_GCKCSS_MSK & reg) >> PMC_PCR_GCKCSS_SHIFT),
+                   ((PMC_PCR_GCKDIV_MSK & reg) >> PMC_PCR_GCKDIV_SHIFT));
+        else
+            printf("\n");
+    }
+
+    if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCSR0, msp, op))))
+        goto clean_up;
+    reg = *mmp;
+    if (op->verbose > 1)
+        pr2serr("PMC_PCSR0=0x%x\n", reg);
+    badp = peri_id_arr;
+
+    if (op->acronp) {
+        if (bn < 32) {
+            if (reg & (1 << bn))
+                printf("%s peripheral clock ENabled\n", op->acronp);
+            else
+                printf("%s peripheral clock DISabled\n", op->acronp);
+        }
+    } else {
+        printf("Peripheral ids with clocks enabled:\n");
+        for (k = 0, mask = 1; k < 32; ++k, mask <<= 1) {
+            if (reg & mask) {
+                for ( ; badp->bit_num >= 0; ++badp) {
+                    if (k == badp->bit_num) {
+                        if (op->verbose)
+                            printf("    %d\t%s:\t%s\n", k, badp->acron,
+                                   badp->desc);
+                        else
+                            printf("    %s:\t%s\n", badp->acron, badp->desc);
+                        break;
+                    } else if (k < badp->bit_num) {
+                        printf("    PMC_PCSR0 bit_num=%d set\n", k);
+                        break;
+                    }
+                }
+                if (badp->bit_num < 0)
+                    printf("    PMC_PCSR0 bit_num=%d set\n", k);
+            }
+        }
+    }
+
+    if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCSR1, msp, op))))
+        goto clean_up;
+    reg = *mmp;
+    if (op->verbose > 1)
+        pr2serr("PMC_PCSR1=0x%x\n", reg);
+    badp = peri_id_arr;
+
+    if (op->acronp) {
+        if (bn > 31) {
+            if (reg & (1 << (bn - 32)))
+                printf("%s peripheral clock ENabled\n", op->acronp);
+            else
+                printf("%s peripheral clock DISabled\n", op->acronp);
+        }
+    } else {
+        // printf("Peripheral clocks enabled:\n");
+        for (k = 32, mask = 1; k < 64; ++k, mask <<= 1) {
+            if (reg & mask) {
+                for ( ; badp->bit_num >= 0; ++badp) {
+                    if (k == badp->bit_num) {
+                        if (op->verbose)
+                            printf("    %d\t%s:\t%s\n", k, badp->acron,
+                                   badp->desc);
+                        else
+                            printf("    %s:\t%s\n", badp->acron, badp->desc);
+                        break;
+                    } else if (k < badp->bit_num) {
+                        printf("    PMC_PCSR1 bit_num=%d set\n", k);
+                        break;
+                    }
+                }
+                if (badp->bit_num < 0)
+                    printf("    PMC_PCSR1 bit_num=%d set\n", k);
+            }
+        }
+    }
+    res = 0;
+
+clean_up:
+    return res;
 }
 
 int
 main(int argc, char * argv[])
 {
-    int mem_fd, k, opt, n, no_clock_preference, found;
+    int mem_fd, k, opt, no_clock_preference, found;
     int bn = 0;
     int res = 1;
-    unsigned int reg, ui, mask;
-    const char * acronp = NULL;
-    int css = CLK_SRC_DEF;
-    int divisor = 0;
-    int do_disable = 0;
-    int enumerate = 0;
-    int do_enable = 0;
-    int pgc = 0;
-    int wpen = 0;
-    bool do_generic = false;
-    bool sel_peri_clks = false;
-    bool sel_sys_clks = false;
-    bool css_given = false;
-    bool divisor_given = false;
-    bool pgc_given = false;
-    bool wpen_given = false;
+    unsigned int reg;
     struct bit_acron_desc * badp;
     volatile unsigned int * mmp;
     struct mmap_state mstat;
+    struct mmap_state * msp;
     char b[16];
     const char * cp;
+    struct opts_t opts;
+    struct opts_t * op;
 
     mem_fd = -1;
+    msp = &mstat;
+    op = &opts;
+    memset(op, 0, sizeof(opts));
+    op->css = CLK_SRC_DEF;
     while ((opt = getopt(argc, argv, "a:c:d:DeEghpP:svVw:")) != -1) {
         switch (opt) {
         case 'a':
-            acronp = optarg;
+            op->acronp = optarg;
             break;
         case 'c':
             if (isdigit(optarg[0])) {
@@ -432,10 +736,10 @@ main(int argc, char * argv[])
                             "inclusive\n");
                     return 1;
                 }
-                css = k;
+                op->css = k;
             } else {
                 cp = optarg;
-                css = -1;
+                op->css = -1;
                 for (badp = clock_src_arr; badp->bit_num >= 0; ++badp) {
                     if (badp->acron[0] != toupper(cp[0]))
                         continue;
@@ -444,45 +748,45 @@ main(int argc, char * argv[])
                             break;
                     }
                     if ('\0' == badp->acron[k]) {
-                        css = badp->bit_num;
+                        op->css = badp->bit_num;
                         break;
                     }
                 }
-                if (css < 0) {
+                if (op->css < 0) {
                     pr2serr("'-c CSS' string not found; the choices are:\n");
                     for (badp = clock_src_arr; badp->bit_num >= 0; ++badp)
                         printf("    %s\n", badp->acron);
                     return 1;
                 }
             }
-            css_given = true;
+            op->css_given = true;
             break;
         case 'd':
-            divisor = atoi(optarg);
-            if ((divisor < 0) || (divisor > 256)) {
+            op->divisor = atoi(optarg);
+            if ((op->divisor < 0) || (op->divisor > 256)) {
                 pr2serr("expect argument to '-d' to be 0 to 256 inclusive\n");
                 return 1;
             }
-            divisor_given = true;
+            op->divisor_given = true;
             break;
         case 'D':
-            ++do_disable;
+            ++op->do_disable;
             break;
         case 'e':
-            ++enumerate;
+            ++op->enumerate;
             break;
         case 'E':
-            ++do_enable;
+            ++op->do_enable;
             break;
         case 'g':
-            do_generic = true;
+            op->do_generic = true;
             break;
         case 'h':
         case '?':
             usage();
             return 0;
         case 'p':
-            sel_peri_clks = true;
+            op->sel_peri_clks = true;
             break;
         case 'P':
             k = atoi(optarg);
@@ -490,29 +794,29 @@ main(int argc, char * argv[])
                 pr2serr("expect argument to '-P' to be 0, 1 or 2\n");
                 return 1;
             }
-            pgc = k;
-            pgc_given = true;
+            op->pgc = k;
+            op->pgc_given = true;
             break;
         case 's':
-            sel_sys_clks = true;
+            op->sel_sys_clks = true;
             break;
         case 'v':
-            ++verbose;
+            ++op->verbose;
             break;
         case 'V':
             pr2serr("version: %s\n", version_str);
             return 0;
         case 'w':
             if (0 == strcmp("-1", optarg))
-                wpen = -1;
+                op->wpen = -1;
             else {
-                wpen = atoi(optarg);
-                if ((wpen < 0) || (wpen > 1)) {
+                op->wpen = atoi(optarg);
+                if ((op->wpen < 0) || (op->wpen > 1)) {
                     pr2serr("expect argument to '-w' to be 0, 1 or -1\n");
                     return 1;
                 }
             }
-            wpen_given = true;
+            op->wpen_given = true;
             break;
         default:
             pr2serr("unrecognised option code 0x%x ??\n", opt);
@@ -528,35 +832,35 @@ main(int argc, char * argv[])
         }
     }
 
-    if (enumerate) {
-        do_enumerate(enumerate);
+    if (op->enumerate) {
+        do_enumerate(op);
         return 0;
     }
 
-    if (do_disable && do_enable) {
+    if (op->do_disable && op->do_enable) {
         pr2serr("Cannot give both '-D' and '-E' options\n");
         return 1;
     }
-    if (divisor_given) {
-        if (! (acronp || pgc_given)) {
+    if (op->divisor_given) {
+        if (! (op->acronp || op->pgc_given)) {
             pr2serr("with '-d DIV' must also give '-a ACRON' or '-P PGC'\n");
             return 1;
         }
-        if (! (do_disable || do_enable)) {
+        if (! (op->do_disable || op->do_enable)) {
             pr2serr("with '-d DIV' must give either '-D' or '-E'\n");
             return 1;
         }
     }
 
-    no_clock_preference = (! (sel_peri_clks || sel_sys_clks));
-    if (acronp) {
-        if (isdigit(*acronp)) {
-            if (sel_peri_clks == sel_sys_clks) {
+    no_clock_preference = (! (op->sel_peri_clks || op->sel_sys_clks));
+    if (op->acronp) {
+        if (isdigit(*op->acronp)) {
+            if (op->sel_peri_clks == op->sel_sys_clks) {
                 pr2serr("When ACRON is a number need either '-p' or '-s' "
                         "but not both\n");
                 return 1;
             }
-            bn = atoi(acronp);
+            bn = atoi(op->acronp);
             if ((bn < 0) || (bn > 63)) {
                 pr2serr("When ACRON is a number that number needs to be from "
                         "0 to 63\n");
@@ -564,10 +868,10 @@ main(int argc, char * argv[])
             }
         } else { /* try to match (case insensitive) with the acron field */
             for (k = 0; k < (int)(sizeof(b) - 1); ++k)
-                b[k] = toupper(acronp[k]);
+                b[k] = toupper(op->acronp[k]);
             b[sizeof(b) - 1] = '\0';
             found = 0;
-            if (no_clock_preference || sel_sys_clks) {
+            if (no_clock_preference || op->sel_sys_clks) {
                 for (badp = sys_id_arr; badp->bit_num >= 0; ++badp) {
                     if (0 == strcmp(b, badp->acron))
                         break;
@@ -575,11 +879,11 @@ main(int argc, char * argv[])
                 if (badp->bit_num >= 0) {
                     bn = badp->bit_num;
                     ++found;
-                    sel_sys_clks = true;
-                    sel_peri_clks = false;
+                    op->sel_sys_clks = true;
+                    op->sel_peri_clks = false;
                 }
             }
-            if (! found && ((no_clock_preference || sel_peri_clks))) {
+            if (! found && ((no_clock_preference || op->sel_peri_clks))) {
                 for (badp = peri_id_arr; badp->bit_num >= 0; ++badp) {
                     if (0 == strcmp(b, badp->acron))
                         break;
@@ -591,320 +895,98 @@ main(int argc, char * argv[])
                 if (badp->bit_num >= 0) {
                     bn = badp->bit_num;
                     ++found;
-                    sel_peri_clks = true;
-                    sel_sys_clks = false;
+                    op->sel_peri_clks = true;
+                    op->sel_sys_clks = false;
                 }
             }
             if (! found) {
                 pr2serr("Could not match ACRON: %s, use '-e' to see what is "
-                        "available\n", acronp);
+                        "available\n", op->acronp);
                 return 1;
             }
         }
-        if (sel_sys_clks && (bn > 31)) {
+        if (op->sel_sys_clks && (bn > 31)) {
             pr2serr("For system clocks the ACRON value [%d] cannot exceed "
                     "31\n", bn);
             return 1;
         }
     }
-    if ((divisor_given) && (! (sel_peri_clks || pgc_given))) {
+    if ((op->divisor_given) && (! (op->sel_peri_clks || op->pgc_given))) {
         pr2serr("'-d DIV' only applies to peripheral and programmable "
                 "clocks\n");
         return 1;
     }
-    if (do_generic) {
-        if (do_enable)
-            ++do_enable;
-        if (do_disable)
-            ++do_disable;
+    if (op->do_generic) {
+        if (op->do_enable)
+            ++op->do_enable;
+        if (op->do_disable)
+            ++op->do_disable;
     }
 
-    if (! (sel_peri_clks || sel_sys_clks || pgc_given))
-        sel_peri_clks = true;
+    if (! (op->sel_peri_clks || op->sel_sys_clks || op->pgc_given))
+        op->sel_peri_clks = true;
 
     if ((mem_fd = open(DEV_MEM, O_RDWR | O_SYNC)) < 0) {
         perror("open of " DEV_MEM " failed");
-        if (NULL == acronp)
+        if (NULL == op->acronp)
             pr2serr("  Try '-h' to see usage.\n");
         return 1;
-    } else if (verbose)
+    } else if (op->verbose)
         printf("open(" DEV_MEM "O_RDWR | O_SYNC) okay\n");
 
-    memset(&mstat, 0, sizeof(mstat));
+    memset(msp, 0, sizeof(mstat));
 
-    if (wpen_given) {
-        if (-1 == wpen) {
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPMR, &mstat))))
+    if (op->wpen_given) {
+        if (-1 == op->wpen) {
+            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPMR, msp, op))))
                 goto clean_up;
             reg = *mmp;
             printf("Write protect mode: %sabled\n",
                    ((reg & 1) ? "EN" : "DIS"));
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPSR, &mstat))))
+            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPSR, msp, op))))
                 goto clean_up;
             reg = *mmp & 0xffffff;
             printf("Write protect violation status: %d (%s), WPCSRC: "
                    "0x%x\n", (reg & 1), ((reg & 1) ? "VIOLATED" :
                    "NOT violated"), (reg >> 8) & 0xffff);
-        } else if ((0 == wpen) || (1 == wpen)) {
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPMR, &mstat))))
+        } else if ((0 == op->wpen) || (1 == op->wpen)) {
+            if (NULL == ((mmp = get_mmp(mem_fd, PMC_WPMR, msp, op))))
                 goto clean_up;
-            *mmp = (A5D2_PMC_WPKEY << 8) | wpen;
+            *mmp = (A5D2_PMC_WPKEY << 8) | op->wpen;
         }
         res = 0;
         goto clean_up;
     }
-    if (pgc_given) {
-        unsigned int hreg, pckx;
-
-        if (verbose) {
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, &mstat))))
-                goto clean_up;
-            pr2serr("PMC_SCSR=0x%x\n", *mmp);
-        }
-        switch (pgc) {
-        case 0:
-            ui = PMC_SC_PCK0_MSK;
-            pckx = PMC_PCK0;
-            break;
-        case 1:
-            ui = PMC_SC_PCK1_MSK;
-            pckx = PMC_PCK1;
-            break;
-        case 2:
-            ui = PMC_SC_PCK2_MSK;
-            pckx = PMC_PCK2;
-            break;
-        default:
-            pr2serr("bad pgc=%d\n", pgc);
-            goto clean_up;
-            break;
-        }
-        if (! (do_enable || do_disable)) {
-            if (verbose)
-                pr2serr("Use '-E' or '-D' to enable or disable, now "
-                        "providing information about PCK%d\n", pgc);
-            if (NULL == ((mmp = get_mmp(mem_fd, pckx, &mstat))))
-                goto clean_up;
-            reg = *mmp;
-            n = ((PMC_PCKX_PRES_MSK & reg) >> PMC_PCKX_PRES_SHIFT);
-            k = (PMC_PCKX_CSS_MSK & reg);
-            for (badp = clock_src_arr; badp->bit_num >= 0; ++badp) {
-                if (k == badp->bit_num)
-                    break;
-            }
-            cp = (badp->bit_num >= 0) ? badp->acron : "?";
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, &mstat))))
-                goto clean_up;
-            printf("PCK%d: %sabled, CSS: %s [%d], PRES=%d [divisor=%d]\n",
-                   pgc, (ui & *mmp) ? "EN" : "DIS", cp, k, n, n + 1);
-        } else if (do_disable) {/* disabling PCK0, PCK1 or PCK2 */
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCDR, &mstat))))
-                goto clean_up;
-            *mmp = ui;
-            if (verbose)
-                pr2serr("wrote: 0x%x to SCDR [0x%x] to disable PCK%d\n", ui,
-                        pckx, pgc);
-        } else {                /* enabling PCK0, PCK1 or PCK2 */
-            if (NULL == ((mmp = get_mmp(mem_fd, pckx, &mstat))))
-                goto clean_up;
-            reg = *mmp;
-            hreg = reg;
-            if (css_given) {
-                reg &= ~PMC_PCKX_CSS_MSK;
-                reg |= css;
-            }
-            if (divisor_given && (divisor > 0)) {
-                reg &= ~PMC_PCKX_PRES_MSK;
-                reg |= ((divisor - 1) & 0xff) << PMC_PCKX_PRES_SHIFT;
-            }
-            if (reg != hreg) {
-                *mmp = reg;
-                if (verbose)
-                    pr2serr("wrote: 0x%x to PMC_PCK%d [0x%x]\n", reg, pgc,
-                            pckx);
-            } else if (verbose > 1)
-                pr2serr("did not write to PMC_PCK%d [0x%x], 0x%x unchanged\n",
-                        pgc, pckx, reg);
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCER, &mstat))))
-                goto clean_up;
-            *mmp = ui;
-            if (verbose)
-                pr2serr("wrote: 0x%x to SCER [0x%x] to enable PCK%d\n", reg,
-                        PMC_SCER, pgc);
-        }
-        res = 0;
+    if (op->pgc_given) {
+        res = do_pgc(mem_fd, msp, op);
         goto clean_up;
     }
-
-    if (do_enable || do_disable) {
-        if (sel_peri_clks) {
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, &mstat))))
-                goto clean_up;
-            reg = PMC_PCR_WR_CMD_MSK | (css << PMC_PCR_GCKCSS_SHIFT) | bn;
-            if (divisor_given && (divisor > 0))
-                reg |= ((divisor - 1) << PMC_PCR_GCKDIV_SHIFT);
-            if (1 & do_enable)
-                reg |= PMC_PCR_EN_MSK;
-            if (2 & do_enable)
-                reg |= PMC_PCR_GCKEN_MSK;
-            if (verbose > 1)
-                printf("Writing 0x%x to %p [IO addr: 0x%x]\n", reg, mmp,
-                       PMC_PCR);
-            *mmp = reg;
-        }
-        if (do_enable) {
-            if (sel_sys_clks)
-                ui = PMC_SCER;
-            else
-                ui = (bn > 31) ? PMC_PCER1 : PMC_PCER0;
-        } else {
-            if (sel_sys_clks)
-                ui = PMC_SCDR;
-            else
-                ui = (bn > 31) ? PMC_PCDR1 : PMC_PCDR0;
-        }
-        mask = (bn > 31) ? (1 << (bn - 32)) : (1 << bn);
-        if (NULL == ((mmp = get_mmp(mem_fd, ui, &mstat))))
-            goto clean_up;
-        if (verbose > 1)
-            printf("Writing 0x%x to %p [IO addr: 0x%x]\n", mask, mmp, ui);
-        *mmp = mask;
-        res = 0;
+    if (op->do_enable || op->do_disable) {
+        res = en_dis_peri_sys_clk(mem_fd, msp, bn, op);
         goto clean_up;
     }
-
-    if (sel_sys_clks) {
-        if (NULL == ((mmp = get_mmp(mem_fd, PMC_SCSR, &mstat))))
+    if (op->sel_sys_clks) {
+        res = show_sys_clks(mem_fd, msp, bn, op);
+        if (res)
             goto clean_up;
-        reg = *mmp;
-        if (verbose)
-            pr2serr("PMC_SCSR=0x%x\n", reg);
-        badp = sys_id_arr;
-
-        if (acronp) {
-            if (reg & (1 << bn))
-                printf("%s system clock ENabled\n", acronp);
-            else
-                printf("%s system clock DISabled\n", acronp);
-        } else {
-            printf("System clocks enabled:\n");
-            for (k = 0, mask = 1; k < 32; ++k, mask <<= 1) {
-                if (reg & mask) {
-                    for ( ; badp->bit_num >= 0; ++badp) {
-                        if (k == badp->bit_num) {
-                            printf("    %s:\t%s\n", badp->acron, badp->desc);
-                            break;
-                        } else if (k < badp->bit_num) {
-                            printf("    PMC_SCSR bit_num=%d set\n", k);
-                            break;
-                        }
-                    }
-                    if (badp->bit_num < 0)
-                        printf("    PMC_SCSR bit_num=%d set\n", k);
-                }
-            }
-        }
     }
-
-    if (sel_peri_clks) {
-        if (sel_sys_clks)
+    if (op->sel_peri_clks) {
+        if (op->sel_sys_clks)
             printf("\n");
-        if (acronp) {
-            if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCR, &mstat))))
-                goto clean_up;
-            /* write a read cmd for given bn (in the PID field) */
-            *mmp = bn;
-            /* now read back result, DIV field should be populated */
-            reg = *mmp;
-            if (verbose)
-                pr2serr("PMC_PCR=0x%x\n", reg);
-            printf("%s: PCR_EN=%d, PCR_GCKEN=%d", acronp,
-                   !!(PMC_PCR_EN_MSK & reg),
-                   !!(PMC_PCR_GCKEN_MSK & reg));
-            if (PMC_PCR_GCKEN_MSK & reg)
-                printf(", GCKCSS=%d, GCKDIV=%d\n",
-                       ((PMC_PCR_GCKCSS_MSK & reg) >> PMC_PCR_GCKCSS_SHIFT),
-                       ((PMC_PCR_GCKDIV_MSK & reg) >> PMC_PCR_GCKDIV_SHIFT));
-            else
-                printf("\n");
-        }
-
-        if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCSR0, &mstat))))
+        res = show_peri_clks(mem_fd, msp, bn, op);
+        if (res)
             goto clean_up;
-        reg = *mmp;
-        if (verbose)
-            pr2serr("PMC_PCSR0=0x%x\n", reg);
-        badp = peri_id_arr;
-
-        if (acronp) {
-            if (bn < 32) {
-                if (reg & (1 << bn))
-                    printf("%s peripheral clock ENabled\n", acronp);
-                else
-                    printf("%s peripheral clock DISabled\n", acronp);
-            }
-        } else {
-            printf("Peripheral clocks enabled:\n");
-            for (k = 0, mask = 1; k < 32; ++k, mask <<= 1) {
-                if (reg & mask) {
-                    for ( ; badp->bit_num >= 0; ++badp) {
-                        if (k == badp->bit_num) {
-                            printf("    %s:\t%s\n", badp->acron, badp->desc);
-                            break;
-                        } else if (k < badp->bit_num) {
-                            printf("    PMC_PCSR0 bit_num=%d set\n", k);
-                            break;
-                        }
-                    }
-                    if (badp->bit_num < 0)
-                        printf("    PMC_PCSR0 bit_num=%d set\n", k);
-                }
-            }
-        }
-
-        if (NULL == ((mmp = get_mmp(mem_fd, PMC_PCSR1, &mstat))))
-            goto clean_up;
-        reg = *mmp;
-        if (verbose)
-            pr2serr("PMC_PCSR1=0x%x\n", reg);
-        badp = peri_id_arr;
-
-        if (acronp) {
-            if (bn > 31) {
-                if (reg & (1 << (bn - 32)))
-                    printf("%s peripheral clock ENabled\n", acronp);
-                else
-                    printf("%s peripheral clock DISabled\n", acronp);
-            }
-        } else {
-            // printf("Peripheral clocks enabled:\n");
-            for (k = 32, mask = 1; k < 64; ++k, mask <<= 1) {
-                if (reg & mask) {
-                    for ( ; badp->bit_num >= 0; ++badp) {
-                        if (k == badp->bit_num) {
-                            printf("    %s:\t%s\n", badp->acron, badp->desc);
-                            break;
-                        } else if (k < badp->bit_num) {
-                            printf("    PMC_PCSR1 bit_num=%d set\n", k);
-                            break;
-                        }
-                    }
-                    if (badp->bit_num < 0)
-                        printf("    PMC_PCSR1 bit_num=%d set\n", k);
-                }
-            }
-        }
     }
     res = 0;
 
 clean_up:
-    if (mstat.mmap_ok) {
-        if (-1 == munmap(mstat.mmap_ptr, MAP_SIZE)) {
-            pr2serr("mmap_ptr=%p:\n", mstat.mmap_ptr);
+    if (msp->mmap_ok) {
+        if (-1 == munmap(msp->mmap_ptr, MAP_SIZE)) {
+            pr2serr("mmap_ptr=%p:\n", msp->mmap_ptr);
             perror("    munmap");
             res = 1;
-        } else if (verbose > 2)
-            pr2serr("trailing munmap() ok, mmap_ptr=%p\n", mstat.mmap_ptr);
+        } else if (op->verbose > 2)
+            pr2serr("trailing munmap() ok, mmap_ptr=%p\n", msp->mmap_ptr);
     }
     if (mem_fd >= 0)
         close(mem_fd);

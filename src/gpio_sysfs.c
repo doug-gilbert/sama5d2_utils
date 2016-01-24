@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 Douglas Gilbert.
+ * Copyright (c) 2010-2016 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,11 +30,10 @@
 /************************************************************************
  * gpio_sysfs.c
  *
- * Utility for testing SAMA5D3 family GPIO pins. Can read, set and toggle
- * GPIO lines. The SAMA5D3 family has 5 banks of 32 pins: PA0-PA31,
- * PB0-PB31, PC0-PC31, PD0-31 and PE0-31. Some GPIO pins may be
- * committed to other uses thus not available. Uses sysfs gpio(lib)
- * interface.
+ * Utility for testing SAMA5D2 family GPIO pins. Can read, set and toggle
+ * GPIO lines. The SAMA5D2 family has 4 banks of 32 pins: PA0-PA31,
+ * PB0-PB31, PC0-PC31 and PD0-31. Some GPIO pins may be committed to other
+ * uses thus not available. Uses sysfs gpio(lib) interface.
  *
  ****************************************************/
 
@@ -55,7 +54,7 @@
 #include <sched.h>
 
 
-static const char * version_str = "1.10 20131124";
+static const char * version_str = "1.11 20160121";
 
 #define EXPORT_FILE "/sys/class/gpio/export"
 #define UNEXPORT_FILE "/sys/class/gpio/unexport"
@@ -73,7 +72,7 @@ static const char * version_str = "1.10 20131124";
  */
 
 #define DEF_NUM_TOGGLE 1000000
-#define PIO_BANKS_SAMA5D3 5
+#define PIO_BANKS_SAMA5D2 4
 #define LINES_PER_BANK 32
 
 
@@ -128,7 +127,7 @@ usage(void)
             "with '-S')\n"
             "    -v           increase verbosity (multiple times for more)\n"
             "    -V           print version string then exit\n\n"
-            "SAMA5D3 SoC family GPIO test program. Uses sysfs interface.\n"
+            "SAMA5D2 SoC family GPIO test program. Uses sysfs interface.\n"
             "Can set and read lines. Can toggle line ('-t') NUM times with "
             "USEC\ndelay after to each transition. Beware: counting over "
             "20,000\nevents per second may starve (freeze) the kernel.\n");
@@ -342,7 +341,7 @@ bbad:
         k = pwrite(edge_fd, "none", 4, 0);
         close(edge_fd);
     }
-    k = k;      /* suppress warning */
+    if (k) { }   /* suppress warning */
     return ret;
 }
 
@@ -570,7 +569,7 @@ main(int argc, char ** argv)
                 "(for PA0)\n", GPIO_BANK_ORIGIN);
 
     if (enumerate) {
-        num = PIO_BANKS_SAMA5D3;
+        num = PIO_BANKS_SAMA5D2;
         for (k = 0; k < LINES_PER_BANK; ++k) {
             for (j = 0; j < num; ++j) {
                 n = ((j + (! origin0)) * 32) + k;

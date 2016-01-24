@@ -1,0 +1,216 @@
+.TH A5D2_PIO_STATUS "8" "January 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.SH NAME
+a5d2_pio_status \- report status of the Parallel I/O controller lines
+.SH SYNOPSIS
+.B a5d2_pio_status
+[\fI\-a\fR] [\fI\-b BN\fR] [\fI\-B\fR] [\fI\-d\fR] [\fI\-e\fR] [\fI\-f STR\fR]
+[\fI\-h\fR] [\fI\-i\fR] [\fI\-p PORT\fR] [\fI\-s\fR] [\fI\-S\fR] [\fI\-t\fR]
+[\fI\-v\fR] [\fI\-V\fR] [\fI\-w\fR]
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Atmel's SAMA5D2 family of SoCs have one Parallel I/O controller for all 128
+GPIO lines. Confusingly it has a single peripheral identifier (18) but it
+has four interrupts, one for each bank of 32 GPIO lines (ids: 18, 68, 69
+and 70). The banks are named 'A', 'B', 'C' and 'D' and by convention
+each GPIO is named with a leading 'P' followed by the bank letter and
+then a line number within that bank. So the 128 lines are named PA0\-PA31,
+PB0\-PB31, PC0\-PC31 and PD0\-PD31. This utility accepts lower case letters
+as in 'pa15' for bank 'A', line 15.
+.PP
+This utility only reads the state of one or many GPIO lines (with some minor
+exceptions). To change the state of a GPIO line use the a5d2_pio_set utility.
+xxxxxxxx
+.PP
+
+ a Power Management Controller (PMC)
+which achieves power reduction by allowing clocks that run other macrocells
+to be slowed down or stopped. The PMC macrocell also controls the PCK0, PCK1
+and PCK2 programmable clocks which are available via GPIOs.
+.PP
+Various system devices and peripheral devices have clocks controlled by the
+PMC macrocell. Peripheral devices are identified using numeric "id"s (e.g.
+TC0 (Timer Counter block 0) is 35). Some peripheral devices get two clocks:
+a "peripheral clock" and a "generic clock". The peripheral clock is typically
+the master clock (e.g. 166 MHz) is is enabled by the EN bit in the Peripheral
+Control Register (PCM_PCR). The generic clock is enabled by the GCKEN bit is
+the same register and is a lot more flexible: its clock source chosen via
+the GCKCSS which can be divided by the value in the GCKDIV field.
+.PP
+The default action of this utility (i.e. when no options are given) is to
+list peripheral ids who have their peripheral/generic clocks enabled.
+.SH OPTIONS
+.TP
+\fB\-a\fR
+list the status of all gpio lines is the given port. If \fI\-p PORT\fR option
+is not given  then bank 'A' is assumed.
+.TP
+\fB\-b\fR \fIBN\fR
+\fIBN\fR can be a complete GPIO line name (e.g. 'PA7' or 'pd23') or a number
+between 0 and 31 inclusive. The second form (i.e. number only) requires the
+\fI\-p PORT\fR option to be given to complete the GPIO line name.
+.TP
+\fB\-B\fR
+makes the status information briefer. Can be use multiple times to reduce
+the status information even more.
+.TP
+\fB\-d\fR
+when used with the \fI\-t\fR (translate) option the direction of the
+peripheral function is shown after the peripheral line name. The direction
+will be one of "[\-]", "[i]", "[o]", "[io]", "[output]" and "[?]". The
+first is an internal error, followed by input, output and input+output.
+It is not obvious from the Atmel documentation what the difference
+between "[o]" and "[output]" is. The last direction "[?]" is when no direction
+is indicated.  For example: a peripheral line name of "SDMMC0_CD" (card
+detect) becomes "SDMMC0_CD [i]" when this option is given.
+.TP
+\fB\-e\fR
+enumerate information held in tables by this utility. When used once, each
+PIO pin is listed (32 rows by 4 column, a column for each bank. Following
+each PIO name is the corresponding gpio kernel line number which run from
+0 to 127. For example, one cell looks like this: "PB21: 53".
+.br
+When this option is used twice then all the possible peripheral function
+names (up to six per PIO line) for all lines in all blanks are listed
+with output like this: "PA13: SDMMC0_CD, -, -, -, FLEXCOM3_IO1, D8". To
+reduce the volume of output, only one bank is shown if the \fI\-p PORT\fR
+option is given.
+.TP
+\fB\-f\fR \fISTR\fR
+if \fISTR\fR is found in peripheral function names, output matches then
+exit. This option does not require a SAMA5D2 family SoC to be present. If
+\fISTR\fR is a GPIO line name (e.g. "PC23") then the possible peripheral
+function names for that GPIO line are listed. Otherwise the GPIO line name
+and peripheral function name which contains \fISTR\fR is output, one match
+per line. [The "contains" criteria is as per the C library strstr() function
+also known as finding a needle in a haystack.]
+.TP
+\fB\-h\fR
+print out usage message then exit.
+.TP
+\fB\-i\fR
+when given the interrupt status register (PIO_ISRx) for the containing bank
+is read. So the register contains a bit for each line in the bank. If a
+bit is set then there has been a change on the corresponding line since the
+previous PIO_ISRx call to that bank, or since a reset. If the bit is 0 then
+there has been no change in that period.
+.br
+The PIO_ISRx registers are only read when this option is given. It is
+potentially dangerous because it may clear the state of a line in the same
+bank other than the line the user is interested in.
+.TP
+\fB\-p\fR \fIPORT\fR
+\fIPORT\fR may be a single letter or a number. If it is a letter then it
+should be 'A', 'B', 'C' or 'D' representing a bank. If it is a number then
+it is interpreted as a kernel gpio line number. These numbers range from
+0 to 127; 0 to 31 are in bank 'A' and correspond to PA0 to PA31; PB0
+corresponds to 32 while PBD31 cooresponds to 127.
+.TP
+\fB\-s\fR
+summarizes all lines in a bank It is eqivalent to this sequence of
+options: '\-a \-BB \-t'. Example: 'a5d2_pio_status \-s \-p C'.
+.TP
+\fB\-S\fR
+for each line in each bank (with each bank as a column) the decoded I/O line
+function is shown.
+xxxxxxxxx
+.TP
+\fB\-t\fR
+translates a GPIO line name and peripheral type to functional name (e.g. PD15
+peri_b \-> FLEXCOM4_IO3).
+
+
+.TP
+\fB\-v\fR
+increase the level of verbosity, (i.e. debug output). Additional output
+caused by this option is sent to stderr.
+.TP
+\fB\-V\fR
+print the version string and then exit.
+.TP
+\fB\-w\fR \fIWPEN\fR
+if \fIWPEN\fR is 0 then this utility will attempt to disable the write
+protect feature on the TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is
+1 then this utility will attempt to enable the write protect feature on the
+TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is \-1 then this utility
+will attempt to show the current state of the write protect feature on this
+TCB. This utility will exit immediately after the actions associated with
+this option.
+.SH NOTES
+The SAMA5D2 Power Management Controller (PMC) reduces power by turning off
+the master clock going to various macrocells. At power up almost all
+macrocells are turned off. During boot up the kernel turns on those
+macrocell clocks that it needs.
+.SH EXAMPLES
+To view the available system and peripheral clocks:
+.PP
+   a5d2_pmc \-e
+.br
+     System clocks:
+.br
+             ID      Acronym         Description
+.br
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+.br
+             0       PCK             Processor clock
+.br
+             2       DDRCK           DDR clock
+.br
+             ...
+.br
+     Peripheral clocks:
+.br
+             ID      Acronym         Description
+.br
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+.br
+             2       ARM             Performance monitor unit (PMU)
+.br
+             5       GMAC            Ethernet MAC
+.br
+             6       XDMAC0          DMA controller 0
+.br
+             ...
+.PP
+To view the peripheral clocks that are currently enabled:
+.PP
+   a5d2_pmc
+.br
+      Peripheral ids with clocks enabled:
+.br
+         GMAC:       Ethernet MAC
+.br
+         XDMAC0:     DMA controller 0
+.br
+         MPDDRC:     MPDDR controller
+.br
+         PIOA:       Parallel I/O controller
+.br
+         ...
+.PP
+To view the system clocks that are currently enabled:
+.PP
+   a5d2_pmc \-s
+.br
+     System clocks enabled:
+.br
+         PCK:        Processor clock
+.br
+         DDRCK:      DDR clock
+.br
+         UHP:        The UHP48M and UHP12M OHCI clocks
+.br
+.SH EXIT STATUS
+The exit status of a5d2_pmc is 0 when it is successful. Otherwise it
+is most likely to be 1.
+.SH AUTHORS
+Written by Douglas Gilbert.
+.SH "REPORTING BUGS"
+Report bugs to <dgilbert at interlog dot com>.
+.SH COPYRIGHT
+Copyright \(co 2016 Douglas Gilbert
+.br
+This software is distributed under a FreeBSD license. There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.SH "SEE ALSO"
+.B a5d2_pio_set(sama5d2_utils)
