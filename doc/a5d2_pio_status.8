@@ -1,4 +1,4 @@
-.TH A5D2_PIO_STATUS "8" "January 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.TH A5D2_PIO_STATUS "8" "February 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
 .SH NAME
 a5d2_pio_status \- report status of the Parallel I/O controller lines
 .SH SYNOPSIS
@@ -20,25 +20,14 @@ as in 'pa15' for bank 'A', line 15.
 .PP
 This utility only reads the state of one or many GPIO lines (with some minor
 exceptions). To change the state of a GPIO line use the a5d2_pio_set utility.
-xxxxxxxx
 .PP
-
- a Power Management Controller (PMC)
-which achieves power reduction by allowing clocks that run other macrocells
-to be slowed down or stopped. The PMC macrocell also controls the PCK0, PCK1
-and PCK2 programmable clocks which are available via GPIOs.
-.PP
-Various system devices and peripheral devices have clocks controlled by the
-PMC macrocell. Peripheral devices are identified using numeric "id"s (e.g.
-TC0 (Timer Counter block 0) is 35). Some peripheral devices get two clocks:
-a "peripheral clock" and a "generic clock". The peripheral clock is typically
-the master clock (e.g. 166 MHz) is is enabled by the EN bit in the Peripheral
-Control Register (PCM_PCR). The generic clock is enabled by the GCKEN bit is
-the same register and is a lot more flexible: its clock source chosen via
-the GCKCSS which can be divided by the value in the GCKDIV field.
-.PP
-The default action of this utility (i.e. when no options are given) is to
-list peripheral ids who have their peripheral/generic clocks enabled.
+The SAMA5D2 family have a single peripheral id for all PIO banks and that is
+18 which is named "PIOA" (somewhat confusingly). However it has separate
+interrupts for each bank (PIO is 18, PIOB is 68, PIOC is 69 and PIOD is 70).
+So it seems the only sensible setting for the Power Management
+Controller (PMC) with respect to the PIOs is to have peripheral id 18. Note
+that many of the PIO functions will work without a PMC clock (but not generic
+inputs, especially glitch and debouncing functions).
 .SH OPTIONS
 .TP
 \fB\-a\fR
@@ -112,14 +101,21 @@ options: '\-a \-BB \-t'. Example: 'a5d2_pio_status \-s \-p C'.
 .TP
 \fB\-S\fR
 for each line in each bank (with each bank as a column) the decoded I/O line
-function is shown.
-xxxxxxxxx
+function is shown. So this is a summary function over all PIO lines or over
+all PIO lines within a specified bank. When the \fI\-d\fR option is also
+given the the direction of peripheral functions is also shown.
+.br
+When this option is given twice then the lock status of each line is checked
+and if locked the output for the line is surrounded by brackets, for
+example: "[SDMMC0_CD]".
+.br
+When this option is given three times then the freeze status of each line is
+checked and if either the physical or interrupt freeze status is set then
+the output for the line appears like this: "<<SDMMC0_CD>>".
 .TP
 \fB\-t\fR
 translates a GPIO line name and peripheral type to functional name (e.g. PD15
 peri_b \-> FLEXCOM4_IO3).
-
-
 .TP
 \fB\-v\fR
 increase the level of verbosity, (i.e. debug output). Additional output
@@ -128,80 +124,58 @@ caused by this option is sent to stderr.
 \fB\-V\fR
 print the version string and then exit.
 .TP
-\fB\-w\fR \fIWPEN\fR
-if \fIWPEN\fR is 0 then this utility will attempt to disable the write
-protect feature on the TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is
-1 then this utility will attempt to enable the write protect feature on the
-TCB associated with \fIPIO_TIO\fR. If \fIWPEN\fR is \-1 then this utility
-will attempt to show the current state of the write protect feature on this
-TCB. This utility will exit immediately after the actions associated with
-this option.
-.SH NOTES
-The SAMA5D2 Power Management Controller (PMC) reduces power by turning off
-the master clock going to various macrocells. At power up almost all
-macrocells are turned off. During boot up the kernel turns on those
-macrocell clocks that it needs.
+\fB\-w\fR
+reads the write protection status register (PIO_WPSR) which has the side effect
+of clearing it.
 .SH EXAMPLES
-To view the available system and peripheral clocks:
+To view a summary of PIO settings for each line in bank D, try this:
 .PP
-   a5d2_pmc \-e
+   a5d2_pio_status \-s \-pd
 .br
-     System clocks:
+SAMA5D2: PIO D:
 .br
-             ID      Acronym         Description
+ 0 : GPIO pds=1 ods=0 opd=0 ifen=0 puen=1
 .br
-     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+ 1 : GPIO pds=1 ods=0 opd=0 ifen=0 puen=1
 .br
-             0       PCK             Processor clock
+ 2 : URXD1 pds=1 opd=0 ifen=0 puen=0
 .br
-             2       DDRCK           DDR clock
+ 3 : UTXD1 pds=1 opd=0 ifen=0 puen=0
 .br
-             ...
+ 4 : TWD1 pds=1 opd=0 ifen=0 puen=0
 .br
-     Peripheral clocks:
+ 5 : TWCK1 pds=1 opd=0 ifen=0 puen=0
 .br
-             ID      Acronym         Description
+ 6 : GPIO pds=1 ods=0 opd=0 ifen=0 puen=1
 .br
-     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+ .....
 .br
-             2       ARM             Performance monitor unit (PMU)
+ 30: GPIO pds=1 ods=0 opd=0 ifen=0 puen=1
 .br
-             5       GMAC            Ethernet MAC
-.br
-             6       XDMAC0          DMA controller 0
-.br
-             ...
+ 31: GPIO pds=1 ods=0 opd=0 ifen=0 puen=1
 .PP
-To view the peripheral clocks that are currently enabled:
+A more concise summary over all lines follows:
 .PP
-   a5d2_pmc
+   a5d2_pio_status \-S
 .br
-      Peripheral ids with clocks enabled:
+  PIN  PIO_A             PIO_B             PIO_C             PIO_D
 .br
-         GMAC:       Ethernet MAC
+  0:   SDMMC0_CK         GPIO              GPIO              GPIO
 .br
-         XDMAC0:     DMA controller 0
+  1:   SDMMC0_CMD        GPIO              GPIO              GPIO
 .br
-         MPDDRC:     MPDDR controller
+  2:   SDMMC0_DAT0       GPIO              GPIO              URXD1
 .br
-         PIOA:       Parallel I/O controller
+  3:   SDMMC0_DAT1       GPIO              GPIO              UTXD1
 .br
-         ...
+  .....
+.br
+  30:  SDMMC1_CD         GPIO              GPIO              GPIO
+.br
+  31:  GPIO              GPIO              GPIO              GPIO
 .PP
-To view the system clocks that are currently enabled:
-.PP
-   a5d2_pmc \-s
-.br
-     System clocks enabled:
-.br
-         PCK:        Processor clock
-.br
-         DDRCK:      DDR clock
-.br
-         UHP:        The UHP48M and UHP12M OHCI clocks
-.br
 .SH EXIT STATUS
-The exit status of a5d2_pmc is 0 when it is successful. Otherwise it
+The exit status of a5d2_pio_status is 0 when it is successful. Otherwise it
 is most likely to be 1.
 .SH AUTHORS
 Written by Douglas Gilbert.
@@ -213,4 +187,4 @@ Copyright \(co 2016 Douglas Gilbert
 This software is distributed under a FreeBSD license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 .SH "SEE ALSO"
-.B a5d2_pio_set(sama5d2_utils)
+.B a5d2_pio_set, readbits(sama5d2_utils)

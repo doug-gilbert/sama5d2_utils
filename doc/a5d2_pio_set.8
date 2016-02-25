@@ -1,0 +1,314 @@
+.TH A5D2_PIO_SET "8" "February 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.SH NAME
+a5d2_pio_set \- set Parallel I/O controller line characteristics
+.SH SYNOPSIS
+.B a5d2_pio_set
+[\fI\-b BN\fR] [\fI\-d DIV\fR] [\fI\-D DRVSTR\fR] [\fI\-e\fR] [\fI\-E EVT\fR]
+[\fI\-f FUNC\fR] [\fI\-F PHY1INT2B3\fR] [\fI\-g|G\fR] [\fI\-h\fR]
+[\fI\-i|I\fR] [\fI\-m|M\fR] [\fI\-p PORT\fR] [\fI\-r DIR\fR] [\fI\-s FUNC\fR]
+[\fI\-S LEV\fR] [\fI\-t|T\fR] [\fI\-u|U\fR] [\fI\-v\fR] [\fI\-V\fR]
+[\fI\-w WPEN\fR] [\fI\-X MSK,DAT\fR] [\fI\-z|Z\fR]
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Atmel's SAMA5D2 family of SoCs have one Parallel I/O controller for all 128
+GPIO lines. Confusingly it has a single peripheral identifier (18) but it
+has four interrupts, one for each bank of 32 GPIO lines (ids: 18, 68, 69
+and 70). The banks are named 'A', 'B', 'C' and 'D' and by convention
+each GPIO is named with a leading 'P' followed by the bank letter and
+then a line number within that bank. So the 128 lines are named PA0\-PA31,
+PB0\-PB31, PC0\-PC31 and PD0\-PD31. This utility accepts lower case letters
+as in 'pa15' for bank 'A', line 15.
+.PP
+This utility sets the state of one or many GPIO lines (with some minor
+exceptions). To read the state of a GPIO line use the a5d2_pio_status
+utility.
+.PP
+The SAMA5D2 family have a single peripheral id for all PIO banks and that is
+18 which is named "PIOA" (somewhat confusingly). However it has separate
+interrupts for each bank (PIO is 18, PIOB is 68, PIOC is 69 and PIOD is 70).
+So it seems the only sensible setting for the Power Management
+Controller (PMC) with respect to the PIOs is to have peripheral id 18. Note
+that many of the PIO functions will work without a PMC clock (but not generic
+inputs, especially glitch and debouncing functions).
+.SH OPTIONS
+.TP
+\fB\-b\fR \fIBN\fR
+\fIBN\fR can be a complete GPIO line name (e.g. 'PA7' or 'pd23') or a number
+between 0 and 31 inclusive. The second form (i.e. number only) requires the
+\fI\-p PORT\fR option to be given to complete the GPIO line name.
+.TP
+\fB\-d\fR \fIDIV\fR
+where \fIDIV\fR is the slow clock divider. The period of the clock used for
+debouncing is 2*(\fIDIV\fR+1)*slow_clock_per . There is only one such divider
+shared by all GPIO lines in all banks. This register is in the "secure" area,
+its full name is "Secure PIO Slow Clock Divider Debouncing register" and
+Atmel's abbreviated name is S_PIO_SCDR.
+.TP
+\fB\-D\fR \fIDRVSTR\fR
+where \fIDIVSTR\fR is the drive strength of the given GPIO line when it is
+output. There are three settings: LO, ME and HI with the values 0 and 1
+meaning LO, 2 meaning ME and 3 meaning HI. \fIDRVSTR\fR can be one of those
+numbers or the single letters 'L', 'M' or 'H'.
+.br
+This option modifies the PIO_MSKRx and PIO_CFGRx registers where "x" is 0,
+1, 2, or 3 coresponding to bank 'A', 'B', 'C' or 'D' respectively.
+.br
+There are some caveats (see the SAMA5D2 family's electrical characteristics)
+but broadly speaking LO can sink and source a maximum of 2 mA, ME can sink
+and source a maximum of 20 mA while HI can sink and source a maximum of 32
+mA. These values are for a Vddio of 3.3 volts, the maximum current drive
+for a Vddio of 1.8 volts is less.
+.TP
+\fB\-e\fR
+enumerate information held in tables by this utility. When used once, each
+PIO pin is listed (32 rows by 4 column, a column for each bank. Following
+each PIO name is the corresponding gpio kernel line number which run from
+0 to 127. For example, one cell looks like this: "PB21: 53".
+.br
+When this option is used twice then all the possible peripheral function
+names (up to six per PIO line) for all lines in all blanks are listed
+with output like this: "PA13: SDMMC0_CD, -, -, -, FLEXCOM3_IO1, D8". To
+reduce the volume of output, only one bank is shown if the \fI\-p PORT\fR
+option is given. If this option is used three times additionally direction
+information is output which produces output like this: "PA13:
+SDMMC0_CD [i], -, -, -, FLEXCOM3_IO1 [io], D8 [io]".
+.TP
+\fB\-f\fR \fIFUNC\fR
+where \fIFUNC\fR is a single letter or digit representing the peripheral
+function of the specified GPIO line. 'P' or '0' chooses the generic GPIO
+function; 'A' or 1 chooses peripheral function A; 'B' or 2 chooses peripheral
+function B;  'C' or 3 chooses peripheral function C; 'D' or 4 chooses
+peripheral function D; 'E' or 5 chooses peripheral function E; 'F' or 6
+chooses peripheral function F; and 'G' or 7 chooses peripheral function G.
+.br
+The SAMA5D2 family currently does not use peripheral function G.
+.br
+This option modifies the PIO_MSKRx and PIO_CFGRx registers where "x" is 0,
+1, 2, or 3 coresponding to bank 'A', 'B', 'C' or 'D' respectively.
+.TP
+\fB\-F\fR \fIPHY1INT2B3\fR
+this option controls the freeze configuration of the given GPIO line. If
+\fIPHY1INT2B3\fR is 1 then the physical configuration is frozen; thereafter
+the FUNC, DIR, pull-up/down, open drain, schmitt trigger and DRVSTR settings
+of the given GPIO line cannot be modified. If \fIPHY1INT2B3\fR is 2 then
+the interrupt configuration is frozen; thereafter the input filter (enable),
+input filter slow clock (enable) and EVT settings of the given GPIO line
+cannot be modified. If \fIPHY1INT2B3\fR is 3 then both the physical and
+interrupt configurations are frozen.
+.br
+If \fIPHY1INT2B3\fR is 0 then it has no effect; values other then 0 to 3
+are treated as syntax errors.
+.br
+This option modifies the PIO_MSKRx and PIO_CFGRx registers where "x" is 0,
+1, 2, or 3 coresponding to bank 'A', 'B', 'C' or 'D' respectively.
+.TP
+\fB\-h\fR
+print out usage message then exit.
+.TP
+\fB\-i\fR
+this option will cause the interrupt associated with the current GPIO pin
+to be disabled. This option modifies the PIO_IDRx register.
+.TP
+\fB\-I\fR
+this option will cause the interrupt associated with the current GPIO pin
+to be enabled. This option modifies the PIO_IERx register.
+.TP
+\fB\-m\fR
+this option will cause the current GPIO pin's open drain (previously called
+multi-drive) capability to be disabled. This option modifies the PIO_MSKRx
+and PIO_CFGRx registers.
+.TP
+\fB\-M\fR
+this option will cause the current GPIO pin's open drain (previously called
+multi-drive) capability to be enabled. This option modifies the PIO_MSKRx
+and PIO_CFGRx registers.
+.TP
+\fB\-p\fR \fIPORT\fR
+\fIPORT\fR may be a single letter or a number. If it is a letter then it
+should be 'A', 'B', 'C' or 'D' representing a bank. If it is a number then
+it is interpreted as a kernel gpio line number. These numbers range from
+0 to 127; 0 to 31 are in bank 'A' and correspond to PA0 to PA31; PB0
+corresponds to 32 while PBD31 cooresponds to 127.
+.TP
+\fB\-r\fR \fIDIR\fR
+where \fIDIR\fR seta the direction of the line. When \fIDIR\f is 0 then the
+given GPIO line is configured as "pure input".  When \fIDIR\f is 1 then the
+given GPIO line is configured as output. This option has no effect when
+\fIFUNC\fR is non generic (i.e. other than 0). This option modifies the
+PIO_MSKRx and PIO_CFGRx registers.
+.br
+Even when a line's direction is set to output, it's input value can be read.
+This is useful, for example, when a line is "open drain" and its direction
+is set as output and set high: another user of the same line might drive
+it low and that low input value could be read on this line.
+.TP
+\fB\-s\fR \fIFUNC\fR
+this option has the same action as \fI\-f FUNC\fR, se that option's
+description above. This option modifies the PIO_MSKRx and PIO_CFGRx
+registers.
+.TP
+\fB\-S\fR \fILEV\fR
+where \fILEV\fR has the value 0 or 1. 0 is the logical low value and is
+close to 0 volts; 1 is the logical high value and is close to 3.3 volts
+if Vddio is 3.3 volts. This option has no effect is the line \fIFUNC\fR
+is other than 'G' or 0 (i.e. a generic GPIO line). Also the \fIDIR\fR of
+the line must be set to output. If \fILEV\fR is 0 then the PIO_SODRx
+register is modified and if \fILEV\fR is 1 then the PIO_CODRx register is
+modified.
+.TP
+\fB\-t\fR
+this option will remove the Schmitt trigger input circuitry from the given
+GPIO line. This option modifies the PIO_MSKRx and PIO_CFGRx registers.
+.TP
+\fB\-T\fR
+this option will enable the Schmitt trigger input circuitry on the given
+GPIO line. This option modifies the PIO_MSKRx and PIO_CFGRx registers.
+.TP
+\fB\-u\fR
+this option will disable the pull\-up (resistor) on the given GPIO line.
+When used twice it will disable the pull\-down (resistor) on the given line.
+When used three times it will disable both the pull\-up and pull\-down on
+the given line. This option modifies the PIO_MSKRx and PIO_CFGRx registers.
+.TP
+\fB\-U\fR
+this option will enable the pull\-up (resistor) on the given GPIO line.
+When used twice it will enable the pull\-down (resistor) on the given line.
+When used three times it will enable both the pull\-up and pull\-down on
+the given line. This option modifies the PIO_MSKRx and PIO_CFGRx registers.
+.br
+The pull\-up is in the range from 40 to 130 kOhms; the pull\-down is in the
+range 40 to 160 kOhms.
+.TP
+\fB\-v\fR
+increase the level of verbosity, (i.e. debug output). Additional output
+caused by this option is sent to stderr.
+.TP
+\fB\-V\fR
+print the version string and then exit.
+.TP
+\fB\-w\fR \fIWPEN\fR
+\fIWPEN\fR is placed in the WPEN bit of the write protection mode
+register (PIO_WPMR). This single setting effects all lines and all banks.
+Only the values 0 (for disable) and 1 (for enable) are permitted. Once
+write protection is enabled the PIO mask and configuration registers can
+not be changed.
+.TP
+\fB\-X\fR \fIMSK,DAT\fR
+this option writes new values from 0 to 32 generic GPIO lines in a bank
+in a single step (i.e. so all the new values appear on the outputs at
+the same time). \fIMSK\fR is a 32 bit value whose bit positions (numbered 0
+to 31) correspond to GPIO line numbers. When a bit is set in \fIMSK\fR
+then the corresponding bit in \fIDAT\fR is written to the corresponding
+generic GPIO line. Only GPIO lines whose function is generic and whose
+\fIDIR\fR is output are effected.
+.br
+Typically the option is used together with the \fI\-p PORT\fR to specific
+which bank is to be written to. If a bank cannot be deduced then bank 'A'
+is used.
+.br
+This option modifies the PIO_MSKRx (writing \fIMSK\fR to it) and the
+PIO_ODSRx register (writing \fIDAT\fR to it).
+.TP
+\fB\-z\fR
+this option will disable the input filter slow clock setting in the
+configuration register. This option modifies the PIO_MSKRx and PIO_CFGRx
+registers.
+.TP
+\fB\-Z\fR
+this option will enable the input filter slow clock setting in the
+configuration register. This option modifies the PIO_MSKRx and PIO_CFGRx
+registers.
+.SH ORDER OF CHANGES
+When multiple actions are requested in one invocation then ther order in
+which they are appiled may be significant. The following list is in
+chronological order:
+.TP
+if disable interupts given then it is applied first
+.TP
+if \fI\-w WPEN\fR is given and is zero, then it is applied next
+.TP
+if \fI\-f FUNC\fR is given then it is applied next
+.PP
+And the ordering of the final few is:
+.TP
+if \fI\-w WPEN\fR is given and is one, then it is applied next
+.TP
+if enable interrupts is given then it is applied now
+.TP
+if freeze configuration given then it is applied last
+.PP
+.SH EXAMPLES
+xxxxxx
+To view the available system and peripheral clocks:
+.PP
+   a5d2_pmc \-e
+.br
+     System clocks:
+.br
+             ID      Acronym         Description
+.br
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+.br
+             0       PCK             Processor clock
+.br
+             2       DDRCK           DDR clock
+.br
+             ...
+.br
+     Peripheral clocks:
+.br
+             ID      Acronym         Description
+.br
+     \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-
+.br
+             2       ARM             Performance monitor unit (PMU)
+.br
+             5       GMAC            Ethernet MAC
+.br
+             6       XDMAC0          DMA controller 0
+.br
+             ...
+.PP
+To view the peripheral clocks that are currently enabled:
+.PP
+   a5d2_pmc
+.br
+      Peripheral ids with clocks enabled:
+.br
+         GMAC:       Ethernet MAC
+.br
+         XDMAC0:     DMA controller 0
+.br
+         MPDDRC:     MPDDR controller
+.br
+         PIOA:       Parallel I/O controller
+.br
+         ...
+.PP
+To view the system clocks that are currently enabled:
+.PP
+   a5d2_pmc \-s
+.br
+     System clocks enabled:
+.br
+         PCK:        Processor clock
+.br
+         DDRCK:      DDR clock
+.br
+         UHP:        The UHP48M and UHP12M OHCI clocks
+.br
+.SH EXIT STATUS
+The exit status of a5d2_pio_set is 0 when it is successful. Otherwise it
+is most likely to be 1.
+.SH AUTHORS
+Written by Douglas Gilbert.
+.SH "REPORTING BUGS"
+Report bugs to <dgilbert at interlog dot com>.
+.SH COPYRIGHT
+Copyright \(co 2016 Douglas Gilbert
+.br
+This software is distributed under a FreeBSD license. There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.SH "SEE ALSO"
+.B a5d2_pio_status, setbits(sama5d2_utils)

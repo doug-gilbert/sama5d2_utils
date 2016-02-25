@@ -5,7 +5,8 @@ MANDIR=$(DESTDIR)/$(PREFIX)/share/man
 INSTALL=/usr/bin/install
 MAN_PREF=man8
 
-MAN_PGS       = a5d3_tc_freq.8 a5d3_pmc.8 gpio_sysfs.8 readbits.8 setbits.8
+MAN_PGS       = a5d2_tc_freq.8 a5d2_pmc.8 gpio_sysfs.8 readbits.8 setbits.8 \
+		a5d2_pio_set.8 a5d2_pio_status.8
 
 EXTRA_MAN_PGS	=
 

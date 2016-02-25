@@ -55,7 +55,7 @@
 #include <libgen.h>
 
 
-static const char * version_str = "1.01 20160123";
+static const char * version_str = "1.02 20160220";
 
 
 #define PIO_BANKS_SAMA5D2 4  /* PIOA, PIOB, PIOC and PIOD */
@@ -537,7 +537,7 @@ static struct periph_name piod_trans[] = {
     {-1, -1, NULL, -1},         /* sentinel */
 };
 
-struct periph_name * bank_pn_arr[] = {
+static struct periph_name * bank_pn_arr[] = {
     pioa_trans,
     piob_trans,
     pioc_trans,
@@ -545,7 +545,7 @@ struct periph_name * bank_pn_arr[] = {
     NULL,       /* sentinel */
 };
 
-const char * bank_str_arr[] = {
+static const char * bank_str_arr[] = {
     "PA",
     "PB",
     "PC",
@@ -626,11 +626,12 @@ usage(int hval)
                 "    -v           increase verbosity (multiple times for "
                 "more)\n"
                 "    -V           print version string then exit\n");
-        pr2serr("    -w           read write protect status register "
-                "which clears it\n");
-        pr2serr("\nSAMA5D2x SoC PIO fetch status program. "
-                "Uses memory mapped\nIO to fetch PIO registers and shows "
-                "settings for given line(s). Try\n'-hh' for more help.\n");
+        pr2serr("    -w           reads the write protect status register "
+                "which\n"
+                "                 then clears that register\n");
+        pr2serr("\nSAMA5D2x SoC PIO fetch status program. Uses memory "
+                "mapped IO to\nfetch PIO registers and shows settings for "
+                "given line(s). Try '-hh'\nfor more help.\n");
     } else {
         pr2serr(">> Abbreviation explanations\n"
                 "driv:     line drive strength [def: 0 -> lo; 1 -> lo; "
@@ -668,8 +669,8 @@ usage(int hval)
                 "is 0 (i.e. negated logic). For example\n'schmitt*=1' "
                 "means the schmitt trigger is disabled. The trailing '**' "
                 "\nmeans the register is for all PIOs rather than per "
-                "GPIO line. An\nentry like 'is=-1' means that is "
-                "(the interrupt status register)\nhas not been read.\n"
+                "GPIO line. An\nentry like 'is=-1' means that this entry "
+                "(the interrupt status\nregister) has not been read.\n"
                );
     }
 }
@@ -737,31 +738,51 @@ get_mmp(int mem_fd, unsigned int wanted_addr, struct mmap_state * msp)
     return mmp_add(mmap_ptr, wanted_addr & MAP_MASK);
 }
 
+/* Format==0 yields PA21 for a GPIO (for example); format==1 yields GPIO
+ * for a GPIO; format==2 as 1 plus surrounds returned string with "[..]".
+ * Format=3 as 1 plus surrounds returned string with "<<...>>". Returns
+ * first argument 'b' which will contain be "\0" if no match. */
 static char *
 translate_peri(char * b, int max_blen, int pioc_num, int bit_num,
-               int peri_num, bool show_dir)
+               int peri_num, bool show_dir, int format)
 {
+    int mlen, n;
     const struct periph_name * bpnp;
     const struct periph_name * pnp;
+    char * c;
 
     if ((NULL == b) || (max_blen < 1))
         return b;
-    b[max_blen - 1] = '\0';
+    mlen = max_blen - 1;
+    if (2 == format) {
+        snprintf(b, mlen, "[");
+        c = b + 1;
+        --mlen;
+    } else if (3 == format) {
+        snprintf(b, mlen, "<<");
+        c = b + 2;
+        mlen -= 2;
+    } else
+        c = b;
+
     if ((bit_num < 0) || (bit_num > 31)) {
-        snprintf(b, max_blen - 1, "bad bit_num=%d", bit_num);
-        return b;
+        snprintf(c, mlen, "bad bit_num=%d", bit_num);
+        goto th_end;
     }
     if ((peri_num < 0) || (peri_num > MAX_PERIPH_NUM)) {
-        snprintf(b, max_blen - 1, "bad peri_num=%d", peri_num);
-        return b;
+        snprintf(c, mlen, "bad peri_num=%d", peri_num);
+        goto th_end;
     }
     if ((pioc_num < 0) || (pioc_num >= PIO_BANKS_SAMA5D2)) {
-        snprintf(b, max_blen - 1, "bad poic_num=%d", pioc_num);
-        return b;
+        snprintf(c, mlen, "bad poic_num=%d", pioc_num);
+        goto th_end;
     }
     if (0 == peri_num) {
-        snprintf(b, max_blen - 1, "%s%d", bank_str_arr[pioc_num], bit_num);
-        return b;
+        if (format > 0)
+            snprintf(c, mlen, "GPIO");
+        else
+            snprintf(c, mlen, "%s%d", bank_str_arr[pioc_num], bit_num);
+        goto th_end;
     }
     bpnp = bank_pn_arr[pioc_num];
     for (pnp = bpnp; pnp->pin >= 0; ++pnp) {
@@ -773,17 +794,29 @@ translate_peri(char * b, int max_blen, int pioc_num, int bit_num,
             if (pnp->periph < peri_num)
                 continue;
             if (show_dir)
-                snprintf(b, max_blen - 1, "%s [%s]", pnp->name,
-                         dir_arr[pnp->dir]);
+                snprintf(c, mlen, "%s [%s]", pnp->name, dir_arr[pnp->dir]);
             else
-                snprintf(b, max_blen - 1, "%s", pnp->name);
-            return b;
+                snprintf(c, mlen, "%s", pnp->name);
+            goto th_end;
         }
         b[0] = '\0';
         return b;       /* empty string denotes no match */
     }
     b[0] = '\0';
     return b;   /* empty string denotes no match */
+
+th_end:
+    if (2 == format) {
+        n = strlen(c);
+        if ((mlen - n) > 0)
+            snprintf(c + n, mlen - 2, "]");
+    } else if (3 == format) {
+        n = strlen(c);
+        if ((mlen - n) > 0)
+            snprintf(c + n, mlen - 2, ">>");
+
+    }
+    return b;
 }
 
 static int
@@ -810,6 +843,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
     if (NULL == ((mmp = get_mmp(mem_fd, pio_cfgr[pioc_num], &mstat))))
         return 1;
     cfgr = *mmp;
+    if (verbose > 1)
+        pr2serr("  PIO_CFGR%d value=0x%x\n", pioc_num, cfgr);
     func = (cfgr & CFGR_FUNC_MSK);
 
     ifen = !!(CFGR_IFEN_MSK & cfgr);
@@ -820,7 +855,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
         else {
             printf("  peripheral function: %c ", 'A' + func - 1);
             if (translate) {
-                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir);
+                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir,
+                               0);
                 if (0 == strlen(b))
                     printf("[-]\n");
                 else
@@ -963,7 +999,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
                 snprintf(e, sizeof(e), "PERI_%c", 'A' + func - 1);
                 cp = e;
                 b[0] = '\0';
-                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir);
+                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir,
+                               0);
                 if (strlen(b) > 0)
                     cp = b;
                 printf("%s pds=%d [ods=%d]", cp, pds, ods);
@@ -985,7 +1022,8 @@ pio_status(int mem_fd, unsigned int bit_mask, int bit_num, int brief,
             cp = e;
             if (translate) {
                 b[0] = '\0';
-                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir);
+                translate_peri(b, sizeof(b), pioc_num, bit_num, func, do_dir,
+                               0);
                 if (strlen(b) > 0)
                     cp = b;
             }
@@ -1044,13 +1082,13 @@ do_enumerate(int enum_val, int bank, int orig0, int do_dir)
                 num = k + 1;
         }
         for ( ; k < num; ++k) {
-            printf("SAMA5D2: PIO %c:\n", 'A' + k);
+            printf("PIO %c:\n", 'A' + k);
             for (j = 0; j < LINES_PER_BANK; ++j) {
-                cp = translate_peri(b, sizeof(b), k, j, 1, do_dir);
+                cp = translate_peri(b, sizeof(b), k, j, 1, do_dir, 0);
                 printf("  P%c%d: %s", 'A' + k, j,
                        (strlen(cp) > 0) ? cp : "-");
                 for (m = 2; m < 7; ++m) {
-                    cp = translate_peri(b, sizeof(b), k, j, m, do_dir);
+                    cp = translate_peri(b, sizeof(b), k, j, m, do_dir, 0);
                     printf(", %s", (strlen(cp) > 0) ? cp : "-");
                 }
                 printf("\n");
@@ -1063,16 +1101,14 @@ do_enumerate(int enum_val, int bank, int orig0, int do_dir)
 static int
 do_show_all(int show_val, int do_dir)
 {
-    int k, j, n, num;
+    int k, j, n, num, format;
     int res = 1;
     int mem_fd = -1;
     unsigned int bit_mask, cfgr;
     char b[32];
     size_t blen = sizeof(b) - 1;
-    void * mmap_ptr = (void *)-1;
     struct mmap_state mstat;
     volatile unsigned int * mmp;
-    bool dir = (do_dir > 0) || (show_val > 1);
 
     if ((mem_fd = open(DEV_MEM, O_RDWR | O_SYNC)) < 0) {
         perror("open of " DEV_MEM " failed");
@@ -1091,25 +1127,27 @@ do_show_all(int show_val, int do_dir)
             printf("%d:   ", k);
         bit_mask = 1 << k;
         for (j = 0; j < num; ++j) {
-            mmap_ptr = check_mmap(mem_fd, pio_mskr[j], &mstat);
-            if (NULL == mmap_ptr)
+            if (NULL == ((mmp = get_mmp(mem_fd, pio_mskr[j], &mstat))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr, pio_mskr[j] & MAP_MASK);
             if (bit_mask != *mmp)
                 *mmp = bit_mask;
-            mmap_ptr = check_mmap(mem_fd, pio_cfgr[j], &mstat);
-            if (NULL == mmap_ptr)
+            if (NULL == ((mmp = get_mmp(mem_fd, pio_cfgr[j], &mstat))))
                 goto clean_up;
-            mmp = mmp_add(mmap_ptr, pio_cfgr[j] & MAP_MASK);
             cfgr = *mmp;
-            if (0 == (CFGR_FUNC_MSK & cfgr))
-                snprintf(b, blen, "%s", "GPIO");
-            else {
-                n = (0x7 & cfgr);
-                translate_peri(b, blen, j, k, n, dir);
-                if (strlen(b) < 1)
-                    snprintf(b, blen, "P%c%d: sel=%d", 'A' + j, k, n);
+            format = 1;
+            if (2 == show_val) {
+                if (NULL == ((mmp = get_mmp(mem_fd, pio_locksr[j], &mstat))))
+                    goto clean_up;
+                if (bit_mask & *mmp)
+                    format = 2;
+            } else if (3 == show_val) {
+                if ((CFGR_PCFS_MSK | CFGR_ICFS_MSK) & cfgr)
+                    format = 3;
             }
+            n = (0x7 & cfgr);
+            translate_peri(b, blen, j, k, n, do_dir, format);
+            if (strlen(b) < 1)
+                snprintf(b, blen, "P%c%d: sel=%d", 'A' + j, k, n);
             printf("%-18s", b);
         }
         printf("\n");
@@ -1255,7 +1293,7 @@ main(int argc, char ** argv)
         usage(do_help);
         exit(ret ? EXIT_FAILURE : EXIT_SUCCESS);
     }
-    if (str) {  /* -f <str>  */
+    if (str) {  /* -f STR  */
         struct periph_name ** bpnpp;
         struct periph_name * pnp;
         char mystr[16];
@@ -1324,13 +1362,14 @@ main(int argc, char ** argv)
                 GPIO_BANK_ORIGIN);
 
     if (enumerate)
-        return do_enumerate(enumerate, bank, origin0, do_dir);
+        return do_enumerate(enumerate, bank, origin0,
+                            (do_dir || (enumerate > 2)));
     if (show_all)
         return do_show_all(show_all, do_dir);
 
     if (knum >= 0) {
         if (bit_num >= 0) {
-            pr2serr("Give either '-p <knum>' or ('-b <bn>' and '-p <bank>') "
+            pr2serr("Give either '-p PORT' or ('-b BN' and '-p PORT') "
                     "but not both\n");
             exit(EXIT_FAILURE);
         }
@@ -1347,18 +1386,18 @@ main(int argc, char ** argv)
             if (write_prot)
                 knum = origin0 ? 0 : 32;
             else {
-                pr2serr("If '-p <bank>' given then also need '-b <bn>'\n");
+                pr2serr("If '-p PORT' given then also need '-b BN>\n");
                 exit(EXIT_FAILURE);
             }
         } else
             knum = (((! origin0) + bank - 'A') * 32) + bit_num;
     } else {
         if (do_all) {
-            printf(">>> Assuming bank A, use '-p <port>' to change\n");
+            printf(">>> Assuming bank A, use '-p PORT' to change\n");
             knum = origin0 ? 0 : 32;
         } else {
-            pr2serr("Need to give gpio line with '-p <port>' and/or "
-                    "'-b <bn>'\n");
+            pr2serr("Need to give gpio line with '-p PORT' and/or "
+                    "'-b BN'\n");
             usage(1);
             exit(EXIT_FAILURE);
         }
@@ -1387,7 +1426,7 @@ main(int argc, char ** argv)
         num = LINES_PER_BANK;
         res = 0;
         if (brief > 1)
-            printf("AT91SAM9G25: PIO %c:\n", 'A' + pioc_num);
+            printf("PIO %c:\n", 'A' + pioc_num);
         for (bit_num = 0; bit_num < num; ++bit_num) {
             bit_mask = 1 << bit_num;
             if (brief < 2)
