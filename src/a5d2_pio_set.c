@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Douglas Gilbert.
+ * Copyright (c) 2016-2018 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,7 +55,7 @@
 #include <libgen.h>
 
 
-static const char * version_str = "1.00 20160219";
+static const char * version_str = "1.01 20180730";
 
 
 #define PIO_BANKS_SAMA5D2 4  /* PA0-31, PB0-31, PC0-31 and PD0-32 */
@@ -619,7 +619,7 @@ usage(int help_val)
                 "[-w WPEN]\n"
                 "                    [-X MSK,DAT] [-z|Z]\n"
                 "  where the main options are:\n"
-                "    -b BN      bit number within port (0 to 31). Also "
+                "    -b BN        bit number within port (0 to 31). Also "
                 "accepts full\n"
                 "                 GPIO name (e.g. '-b PC7' equivalent to "
                 "'-p c -b 7')\n"
@@ -1319,6 +1319,7 @@ main(int argc, char ** argv)
             }
             op->freeze_phy1int2b3 = k;
             op->freeze_given = true;
+            break;
         case 'g':
             ++op->di_if;
             break;
@@ -1442,6 +1443,7 @@ main(int argc, char ** argv)
                 return 1;
             }
             op->wr_dat_given = true;
+            break;
         case 'z':
             ++op->di_if_slow;
             break;
