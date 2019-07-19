@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 Douglas Gilbert.
+ * Copyright (c) 2010-2018 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,7 +60,7 @@
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 
-static const char * version_str = "2.01 20130724";
+static const char * version_str = "2.02 20180731";
 
 #ifndef I2C_FUNC_NOSTART
 #define I2C_FUNC_NOSTART 0x00000010
@@ -163,9 +163,10 @@ usage(int help_val)
             "ignored)\n"
             "    -I           ignore NAKs (twice: ignore NAKs on write "
             "transfer)\n"
-            "    -r <num>     number of bytes to request from slave (def: "
-            "0)\n"
-            "                 Uses slave address from '-i' or '-s' option\n"
+            "    -r <num>     number of bytes in decimal to request from "
+            "slave\n"
+            "                 (def: 0). Uses slave address from '-i' or "
+            "'-s' option\n"
             "    -R <times>   repetition: number of times to send <H,H...> "
             "string\n"
             "                 def: 1; max: 10 times. For testing repeated "

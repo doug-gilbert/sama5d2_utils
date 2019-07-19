@@ -3,7 +3,8 @@ PREFIX=/usr/local
 INSTDIR=$(DESTDIR)/$(PREFIX)/bin
 INSTALL=/usr/bin/install
 
-CC = gcc
+## CC = gcc
+## CC = gcc-8
 ## CC=arm-linux-gnueabi-gcc 
 # for C++/clang testing
 ## CC = g++ -std=c++11

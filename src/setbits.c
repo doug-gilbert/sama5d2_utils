@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2016 Douglas Gilbert.
+ * Copyright (c) 2010-2019 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,7 +53,7 @@
 #include <errno.h>
 
 
-static const char * version_str = "1.08 20160121";
+static const char * version_str = "1.08 20190709";
 
 #define EXPORT_FILE "/sys/class/gpio/export"
 #define UNEXPORT_FILE "/sys/class/gpio/unexport"
@@ -81,9 +81,10 @@ usage(void)
             "setbits [-b BN] [-h] [-p PORT] [-s 0|1] [-S 0|1] [-u] [-U] "
             "[-v] [-V]\n"
             "  where:\n"
-            "    -b BN        bit number within a port (0 to 31). Also\n"
-            "                 accepts prefix like 'pb' or just 'b' for "
-            "PORT>\n"
+            "    -b BN        bit number within a port (0 to 31). Also "
+            "accepts\n"
+            "                 prefix like 'pc' or just 'c' for PORT (e.g. "
+            "'-b c7').\n"
             "    -h           print usage message\n"
             "    -p PORT      port ('a' to 'e') or gpio kernel line number "
             "(0 or more)\n"
@@ -95,7 +96,7 @@ usage(void)
             "    -U           leave line exported on exit\n"
             "    -v           increase verbosity (multiple times for more)\n"
             "    -V           print version string then exit\n\n"
-            "Set GPIO line state on AT91SAM9G20+G25/SAMA5D3-D2 using sysfs. "
+            "Set GPIO line state on AT91SAM9G20+G25/SAMA5D3+D2 using sysfs. "
             "For Aria G25\nand FoxG20 boards. This utility is similar to a "
             "FoxLX utility of the same\nname. Note: in earlier Linux "
             "kernels gpio kernel line numbers started at\n32 (for PA0), "

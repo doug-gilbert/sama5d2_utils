@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2016 Douglas Gilbert.
+ * Copyright (c) 2010-2018 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -54,7 +54,7 @@
 #include <sched.h>
 
 
-static const char * version_str = "1.11 20160121";
+static const char * version_str = "1.12 20180730";
 
 #define EXPORT_FILE "/sys/class/gpio/export"
 #define UNEXPORT_FILE "/sys/class/gpio/unexport"
@@ -229,8 +229,8 @@ process_count(int param, const char * base_dp,
     struct timespec fin_ts;
     struct pollfd a_poll;
     const char * cp;
-    char b[64];
-    char vfn[64];
+    char b[140];
+    char vfn[128];
 
     ret = -1;
     edge_fd = -1;
@@ -352,7 +352,7 @@ process_toggle(const char * base_dp, int num, int force, int have_delay,
                int * val_fdp)
 {
     int k;
-    char b[64];
+    char b[140];
 
     snprintf(b, sizeof(b), "%s/direction", base_dp);
     *direction_fdp = open(b, O_WRONLY);
