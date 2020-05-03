@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2019 Douglas Gilbert.
+ * Copyright (c) 2010-2020 Douglas Gilbert.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,7 +53,7 @@
 #include <errno.h>
 
 
-static const char * version_str = "1.08 20190709";
+static const char * version_str = "1.09 20200502";
 
 #define EXPORT_FILE "/sys/class/gpio/export"
 #define UNEXPORT_FILE "/sys/class/gpio/unexport"
@@ -78,8 +78,9 @@ static void
 usage(void)
 {
     fprintf(stderr, "Usage: "
-            "setbits [-b BN] [-h] [-p PORT] [-s 0|1] [-S 0|1] [-u] [-U] "
-            "[-v] [-V]\n"
+            "setbits [-b BN] [-h] [-p PORT] [-s 0|1] [-S 0|1] [-t] [-T] "
+            "[-u] [-U]\n"
+            "               [-v] [-V]\n"
             "  where:\n"
             "    -b BN        bit number within a port (0 to 31). Also "
             "accepts\n"
@@ -92,6 +93,8 @@ usage(void)
             "                 (def: set to input, usually with weak "
             "pullup)\n"
             "    -S 0|1       state to set (same action as '-s')\n"
+            "    -t           toggle: up(1) then down(0)\n"
+            "    -T           toggle: down(0) then up(1)\n"
             "    -u           unexport gpio line prior to setting bit\n"
             "    -U           leave line exported on exit\n"
             "    -v           increase verbosity (multiple times for more)\n"
@@ -123,6 +126,7 @@ main(int argc, char ** argv)
     int bn = -1;
     int knum = -1;
     int state = -1;
+    int toggle = 0;      /* 1: (-t) up then down; 2: (-T) down then up */
     int unexport = 0;
     int exported_on_exit = 0;
     int exported = 0;
@@ -134,7 +138,7 @@ main(int argc, char ** argv)
     char ch;
     char bank = '\0';
 
-    while ((opt = getopt(argc, argv, "b:hp:s:S:uUvV")) != -1) {
+    while ((opt = getopt(argc, argv, "b:hp:s:S:tTuUvV")) != -1) {
         switch (opt) {
         case 'b':
             cp = optarg;
@@ -193,6 +197,12 @@ main(int argc, char ** argv)
                 fprintf(stderr, "'-%c' expects '0' or '1'\n", opt);
                 exit(EXIT_FAILURE);
             }
+            break;
+        case 't':
+            toggle = 1;
+            break;
+        case 'T':
+            toggle = 2;
             break;
         case 'u':
             ++unexport;
@@ -310,7 +320,7 @@ main(int argc, char ** argv)
         fprintf(stderr, "Open %s: %s\n", b, strerror(errno));
         goto bad;
     }
-    if (state < 0) {
+    if ((state < 0) && (0 == toggle)) {
         if (pwrite(dir_fd, "in", 2, 0) < 0) {
             fprintf(stderr, "Unable to write 'in' to dir_fd: %s\n",
                     strerror(errno));
@@ -322,7 +332,29 @@ main(int argc, char ** argv)
                     strerror(errno));
             goto bad;
         }
-    } else {
+    } else if (1 == state) {
+        if (pwrite(dir_fd, "high", 4, 0) < 0) {
+            fprintf(stderr, "Unable to write 'high' to dir_fd: %s\n",
+                    strerror(errno));
+            goto bad;
+        }
+    } else if (1 == toggle) {
+        if (pwrite(dir_fd, "high", 4, 0) < 0) {
+            fprintf(stderr, "Unable to write 'high' to dir_fd: %s\n",
+                    strerror(errno));
+            goto bad;
+        }
+        if (pwrite(dir_fd, "low", 3, 0) < 0) {
+            fprintf(stderr, "Unable to write 'low' to dir_fd: %s\n",
+                    strerror(errno));
+            goto bad;
+        }
+    } else if (toggle > 1) {
+        if (pwrite(dir_fd, "low", 3, 0) < 0) {
+            fprintf(stderr, "Unable to write 'low' to dir_fd: %s\n",
+                    strerror(errno));
+            goto bad;
+        }
         if (pwrite(dir_fd, "high", 4, 0) < 0) {
             fprintf(stderr, "Unable to write 'high' to dir_fd: %s\n",
                     strerror(errno));

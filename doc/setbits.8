@@ -1,10 +1,11 @@
-.TH SETBITS "8" "January 2016" "sama5d2_utils\-0.90" SAMA5D2_UTILS
+.TH SETBITS "8" "May 2020" "sama5d2_utils\-0.90" SAMA5D2_UTILS
 .SH NAME
 setbits \- Set GPIO bit value using sysfs
 .SH SYNOPSIS
 .B setbits
 [\fI\-b BN\fR] [\fI\-h\fR] [\fI\-p PORT\fR] [\fI\-s 0|1\fR]
-[\fI\-S 0|1\fR] [\fI\-u\fR] [\fI\-U\fR] [\fI\-v\fR] [\fI\-V\fR]
+[\fI\-S 0|1\fR] [\fI\-t\fR] [\fI\-T\fR] [\fI\-u\fR] [\fI\-U\fR] [\fI\-v\fR]
+[\fI\-V\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 .PP
@@ -83,6 +84,16 @@ appear high.
 \fB\-S\fR \fI0|1\fR
 same action as \fI\-s 0|1\fR .
 .TP
+\fB\-t\fR
+perform a toggle operation by first driving the given gpio to 1 (high)
+followed by sending it to 0 (low). Assuming the gpio started low a pulse
+of about 10 microseconds duration has been observed.
+.TP
+\fB\-T\fR
+perform a toggle operation by first driving the given gpio to 0 (low)
+followed by sending it to 1 (high). Assuming the gpio started high an
+inverted pulse of about 10 microseconds duration has been observed.
+.TP
 \fB\-u\fR
 this option causes the specified GPIO line to be "unexported" prior to other
 operations by this utility. This may be required if the specified GPIO line
@@ -149,7 +160,7 @@ Written by Douglas Gilbert.
 .SH "REPORTING BUGS"
 Report bugs to <dgilbert at interlog dot com>.
 .SH COPYRIGHT
-Copyright \(co 2016 Douglas Gilbert
+Copyright \(co 2016\-2020 Douglas Gilbert
 .br
 This software is distributed under a FreeBSD license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

@@ -56,7 +56,7 @@ binary:
 	dh_installxfonts
 	dh_bugfiles
 	dh_lintian
-	dh_gconf
+	dh_installgsettings
 	dh_icons
 	dh_perl
 	dh_usrlocal
